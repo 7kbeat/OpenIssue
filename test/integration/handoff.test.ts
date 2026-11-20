@@ -4,7 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { isRecord } from '../../src/core/guards.js';
 import { contentHash } from '../../src/core/hash.js';
-import { createProposal, readHandoffState } from '../../src/services/handoff.js';
+import { readHandoffState } from '../../src/services/handoff.js';
 import { findIssue } from '../../src/storage/issue.js';
 import {
   createAnchor,
@@ -85,6 +85,27 @@ async function createActiveChange(
   await writeFile(path.join(dir, 'proposal.md'), proposal, 'utf8');
 }
 
+async function createDraftAndLink(
+  anchor: TempDir,
+  issueId: string,
+  changeId: string,
+): Promise<void> {
+  const created = runOpenspec(anchor.root, [
+    'new',
+    'change',
+    changeId,
+    '--description',
+    '访谈草稿',
+    '--json',
+  ]);
+  expect(created.status, created.stderr).toBe(0);
+  const linked = runCli(
+    ['handoff', issueId, '--link', changeId, '--from-interview', '--json'],
+    { cwd: anchor.root, env: env(anchor) },
+  );
+  expect(linked.status, linked.stderr).toBe(0);
+}
+
 async function archiveChange(anchor: TempDir, id: string): Promise<void> {
   const from = path.join(anchor.root, 'openspec', 'changes', id);
   const to = path.join(anchor.root, 'openspec', 'changes', 'archive', `2026-01-01-${id}`);
@@ -98,174 +119,108 @@ async function state(anchor: TempDir, id: string) {
 }
 
 describe('OpenSpec handoff', () => {
-  it('creates a proposal with known context and no generated specs or tasks', async () => {
+  it('links an interview draft without copying or rewriting its content', async () => {
     const anchor = await createAnchor({ id: 'demo', openspec: true, focus: '先跑通收件箱' });
     cleanup.push(anchor);
     await seed(anchor, 'OI-20260101-AAAA');
-
-    const result = runCli(
-      ['handoff', 'OI-20260101-AAAA', '--change', 'billing-integration', '--yes', '--json'],
-      { cwd: anchor.root, env: env(anchor) },
-    );
-    expect(result.status, result.stderr).toBe(0);
-    const output: unknown = JSON.parse(result.stdout);
-    if (!isRecord(output) || !isRecord(output.issue)) throw new Error('invalid handoff output');
-    expect(output.issue.status).toBe('open');
-
-    const changeDir = path.join(anchor.root, 'openspec', 'changes', 'billing-integration');
-    const files = (await readdir(changeDir)).sort();
-    expect(files).toEqual(['.openspec.yaml', 'README.md']);
-    const readme = await readFile(path.join(changeDir, 'README.md'), 'utf8');
-    expect(readme).toContain('接入第三方账单');
-    expect(readme).toContain('账单接入需要先确认鉴权');
-    expect(readme).toContain('先跑通收件箱');
-    const metadata = YAML.parse(
-      await readFile(path.join(changeDir, '.openspec.yaml'), 'utf8'),
-    ) as Record<string, unknown>;
-    expect(metadata['x-openissue-issues']).toContain('OI-20260101-AAAA');
-
-    const issue = await readIssue(anchor, 'OI-20260101-AAAA');
-    expect(issue.status).toBe('open');
-    expect(issue.proposals).toHaveLength(1);
-  });
-
-  it('falls back to the issue id for a Chinese title and keeps the issue open', async () => {
-    const anchor = await createAnchor({ id: 'demo', openspec: true });
-    cleanup.push(anchor);
-    await seed(anchor, 'OI-20260101-BBBB', { title: '中文标题无法转写' });
-    const result = runCli(
-      ['handoff', 'OI-20260101-BBBB', '--yes', '--json'],
-      { cwd: anchor.root, env: env(anchor) },
-    );
-    expect(result.status, result.stderr).toBe(0);
-    const changes = await readdir(path.join(anchor.root, 'openspec', 'changes'));
-    const created = changes.find((name) => name !== 'archive' && name !== 'specs');
-    expect(created).toBe('oi-20260101-bbbb');
-    expect((await readIssue(anchor, 'OI-20260101-BBBB')).status).toBe('open');
-  });
-
-  it('refuses to create without OpenSpec or on a name conflict, and cleans up a failed create', async () => {
-    const missing = await createAnchor({ id: 'demo' });
-    cleanup.push(missing);
-    await seed(missing, 'OI-20260101-CCCC');
-    const noOpenspec = runCli(
-      ['handoff', 'OI-20260101-CCCC', '--change', 'new-change', '--yes'],
-      { cwd: missing.root, env: env(missing) },
-    );
-    expect(noOpenspec.status).not.toBe(0);
-    expect(noOpenspec.stderr).toContain('OpenSpec');
-    await expect(access(path.join(missing.root, 'openspec'))).rejects.toThrow();
-    expect(await readIssue(missing, 'OI-20260101-CCCC')).toMatchObject({ status: 'open' });
-
-    const conflict = await createAnchor({ id: 'demo', openspec: true });
-    cleanup.push(conflict);
-    await seed(conflict, 'OI-20260101-DDDD');
-    await createActiveChange(conflict, 'existing-change');
-    const conflictResult = runCli(
-      ['handoff', 'OI-20260101-DDDD', '--change', 'existing-change', '--yes'],
-      { cwd: conflict.root, env: env(conflict) },
-    );
-    expect(conflictResult.status).not.toBe(0);
-    expect(conflictResult.stderr).toContain('已存在');
-    expect((await readIssue(conflict, 'OI-20260101-DDDD')).proposals).toEqual([]);
-
-    const failing = await createAnchor({ id: 'demo', openspec: true });
-    cleanup.push(failing);
-    await seed(failing, 'OI-20260101-EEEE');
-    const issue = await findIssue(path.join(failing.root, 'openissue'), 'demo', 'OI-20260101-EEEE');
-    const productDir = path.join(failing.root, 'openissue');
-    await expect(
-      createProposal({
-        anchorRoot: failing.root,
-        productDir,
-        productId: 'demo',
-        issue,
-        changeId: 'partial-change',
-        focus: '',
-        runner: async (_args, cwd) => {
-          await mkdir(path.join(cwd, 'openspec', 'changes', 'partial-change'), {
-            recursive: true,
-          });
-          throw new Error('模拟创建失败');
-        },
-      }),
-    ).rejects.toThrow('模拟创建失败');
-    await expect(
-      access(path.join(failing.root, 'openspec', 'changes', 'partial-change')),
-    ).rejects.toThrow();
-    expect((await readIssue(failing, 'OI-20260101-EEEE')).proposals).toEqual([]);
-  });
-
-  it('links an existing proposal without copying or rewriting it', async () => {
-    const anchor = await createAnchor({ id: 'demo', openspec: true });
-    cleanup.push(anchor);
-    await seed(anchor, 'OI-20260101-FFFF');
     const proposal = '# Existing Proposal\n\n保持原样。\n';
-    await createActiveChange(anchor, 'existing-change', proposal);
+    await createActiveChange(anchor, 'billing-integration', proposal);
+
     const result = runCli(
-      ['handoff', 'OI-20260101-FFFF', '--link', 'existing-change', '--json'],
+      ['handoff', 'OI-20260101-AAAA', '--link', 'billing-integration', '--from-interview', '--json'],
       { cwd: anchor.root, env: env(anchor) },
     );
     expect(result.status, result.stderr).toBe(0);
     expect(
       await readFile(
-        path.join(anchor.root, 'openspec', 'changes', 'existing-change', 'proposal.md'),
+        path.join(anchor.root, 'openspec', 'changes', 'billing-integration', 'proposal.md'),
         'utf8',
       ),
     ).toBe(proposal);
-    const issue = await readIssue(anchor, 'OI-20260101-FFFF');
-    expect(issue.status).toBe('open');
-    expect(issue.proposals).toHaveLength(1);
-    const metadata = YAML.parse(
+    const metadataValue: unknown = YAML.parse(
       await readFile(
-        path.join(anchor.root, 'openspec', 'changes', 'existing-change', '.openspec.yaml'),
+        path.join(anchor.root, 'openspec', 'changes', 'billing-integration', '.openspec.yaml'),
         'utf8',
       ),
-    ) as Record<string, unknown>;
-    expect(metadata['x-openissue-issues']).toEqual(['OI-20260101-FFFF']);
+    );
+    if (!isRecord(metadataValue)) throw new Error('invalid metadata');
+    const metadata = metadataValue;
+    expect(metadata['x-openissue-issues']).toEqual(['OI-20260101-AAAA']);
+    expect(metadata['x-openissue-interview']).toMatchObject({
+      status: 'incomplete',
+      issue: 'OI-20260101-AAAA',
+    });
+    const issue = await readIssue(anchor, 'OI-20260101-AAAA');
+    expect(issue.status).toBe('open');
+    expect(issue.proposals).toHaveLength(1);
+  });
+
+  it('refuses to link without OpenSpec or a target change and leaves the issue unchanged', async () => {
+    const missing = await createAnchor({ id: 'demo' });
+    cleanup.push(missing);
+    await seed(missing, 'OI-20260101-BBBB');
+    const noOpenspec = runCli(
+      ['handoff', 'OI-20260101-BBBB', '--link', 'missing-change'],
+      { cwd: missing.root, env: env(missing) },
+    );
+    expect(noOpenspec.status).not.toBe(0);
+    expect(noOpenspec.stderr).toContain('OpenSpec');
+    expect((await readIssue(missing, 'OI-20260101-BBBB')).proposals).toEqual([]);
+
+    const noTarget = await createAnchor({ id: 'demo', openspec: true });
+    cleanup.push(noTarget);
+    await seed(noTarget, 'OI-20260101-CCCC');
+    const missingChange = runCli(
+      ['handoff', 'OI-20260101-CCCC', '--link', 'missing-change'],
+      { cwd: noTarget.root, env: env(noTarget) },
+    );
+    expect(missingChange.status).not.toBe(0);
+    expect(missingChange.stderr).toContain('找不到活跃提案');
+    expect((await readIssue(noTarget, 'OI-20260101-CCCC')).proposals).toEqual([]);
   });
 
   it('waits for all linked proposals to archive before confirming completion', async () => {
     const anchor = await createAnchor({ id: 'demo', openspec: true });
     cleanup.push(anchor);
-    await seed(anchor, 'OI-20260101-GGGG');
+    await seed(anchor, 'OI-20260101-DDDD');
     for (const change of ['change-one', 'change-two']) {
-      const created = runCli(
-        ['handoff', 'OI-20260101-GGGG', '--change', change, '--yes'],
+      await createActiveChange(anchor, change);
+      const linked = runCli(
+        ['handoff', 'OI-20260101-DDDD', '--link', change, '--from-interview'],
         { cwd: anchor.root, env: env(anchor) },
       );
-      expect(created.status, created.stderr).toBe(0);
+      expect(linked.status, linked.stderr).toBe(0);
     }
     await archiveChange(anchor, 'change-one');
-    let handoff = await state(anchor, 'OI-20260101-GGGG');
+    let handoff = await state(anchor, 'OI-20260101-DDDD');
     expect(handoff.archived_pending).toBe(false);
     expect(handoff.link_invalid).toBe(false);
-    const early = runCli(['confirm', 'OI-20260101-GGGG'], {
+    const early = runCli(['confirm', 'OI-20260101-DDDD'], {
       cwd: anchor.root,
       env: env(anchor),
     });
     expect(early.status).not.toBe(0);
-    expect((await readIssue(anchor, 'OI-20260101-GGGG')).status).toBe('open');
+    expect((await readIssue(anchor, 'OI-20260101-DDDD')).status).toBe('open');
 
     await archiveChange(anchor, 'change-two');
-    handoff = await state(anchor, 'OI-20260101-GGGG');
+    handoff = await state(anchor, 'OI-20260101-DDDD');
     expect(handoff.archived_pending).toBe(true);
-    const confirmed = runCli(['confirm', 'OI-20260101-GGGG', '--json'], {
+    const confirmed = runCli(['confirm', 'OI-20260101-DDDD', '--json'], {
       cwd: anchor.root,
       env: env(anchor),
     });
     expect(confirmed.status, confirmed.stderr).toBe(0);
-    expect(await readIssue(anchor, 'OI-20260101-GGGG')).toMatchObject({
+    expect(await readIssue(anchor, 'OI-20260101-DDDD')).toMatchObject({
       status: 'closed',
       close: { reason: 'completed' },
     });
-    expect((await state(anchor, 'OI-20260101-GGGG')).archived_pending).toBe(false);
+    expect((await state(anchor, 'OI-20260101-DDDD')).archived_pending).toBe(false);
   });
 
   it('replaces a missing link, supports manual close, and hides completion prompts for closed issues', async () => {
     const anchor = await createAnchor({ id: 'demo', openspec: true });
     cleanup.push(anchor);
-    await seed(anchor, 'OI-20260101-HHHH', {
+    await seed(anchor, 'OI-20260101-EEEE', {
       proposals: [
         {
           id: 'missing-change',
@@ -275,46 +230,42 @@ describe('OpenSpec handoff', () => {
         },
       ],
     });
-    let handoff = await state(anchor, 'OI-20260101-HHHH');
+    let handoff = await state(anchor, 'OI-20260101-EEEE');
     expect(handoff.link_invalid).toBe(true);
-    expect((await readIssue(anchor, 'OI-20260101-HHHH')).status).toBe('open');
+    expect((await readIssue(anchor, 'OI-20260101-EEEE')).status).toBe('open');
 
     await createActiveChange(anchor, 'replacement-change');
     const relinked = runCli(
-      ['handoff', 'OI-20260101-HHHH', '--link', 'replacement-change'],
+      ['handoff', 'OI-20260101-EEEE', '--link', 'replacement-change'],
       { cwd: anchor.root, env: env(anchor) },
     );
     expect(relinked.status, relinked.stderr).toBe(0);
-    const issue = await readIssue(anchor, 'OI-20260101-HHHH');
+    const issue = await readIssue(anchor, 'OI-20260101-EEEE');
     expect(issue.proposals).toHaveLength(1);
-    handoff = await state(anchor, 'OI-20260101-HHHH');
+    handoff = await state(anchor, 'OI-20260101-EEEE');
     expect(handoff.link_invalid).toBe(false);
 
     await rm(path.join(anchor.root, 'openspec', 'changes', 'replacement-change'), {
       recursive: true,
       force: true,
     });
-    handoff = await state(anchor, 'OI-20260101-HHHH');
+    handoff = await state(anchor, 'OI-20260101-EEEE');
     expect(handoff.link_invalid).toBe(true);
     const closed = runCli(
-      ['close', 'OI-20260101-HHHH', '--reason', 'completed'],
+      ['close', 'OI-20260101-EEEE', '--reason', 'completed'],
       { cwd: anchor.root, env: env(anchor) },
     );
     expect(closed.status, closed.stderr).toBe(0);
     expect(closed.stdout).toContain('提案不会因此取消或改变');
-    expect(await readIssue(anchor, 'OI-20260101-HHHH')).toMatchObject({ status: 'closed' });
-    expect((await state(anchor, 'OI-20260101-HHHH')).archived_pending).toBe(false);
+    expect(await readIssue(anchor, 'OI-20260101-EEEE')).toMatchObject({ status: 'closed' });
+    expect((await state(anchor, 'OI-20260101-EEEE')).archived_pending).toBe(false);
   });
 
   it('shows snapshot differences and clears them after restoring the content', async () => {
     const anchor = await createAnchor({ id: 'demo', openspec: true });
     cleanup.push(anchor);
-    await seed(anchor, 'OI-20260101-IIII');
-    const created = runCli(
-      ['handoff', 'OI-20260101-IIII', '--change', 'snapshot-change', '--yes'],
-      { cwd: anchor.root, env: env(anchor) },
-    );
-    expect(created.status, created.stderr).toBe(0);
+    await seed(anchor, 'OI-20260101-FFFF');
+    await createDraftAndLink(anchor, 'OI-20260101-FFFF', 'snapshot-change');
     const readmePath = path.join(
       anchor.root,
       'openspec',
@@ -324,31 +275,27 @@ describe('OpenSpec handoff', () => {
     );
     const before = await readFile(readmePath, 'utf8');
     const edited = runCli(
-      ['edit', 'OI-20260101-IIII', '--title', '标题已经变化'],
+      ['edit', 'OI-20260101-FFFF', '--title', '标题已经变化'],
       { cwd: anchor.root, env: env(anchor) },
     );
     expect(edited.status, edited.stderr).toBe(0);
-    expect((await state(anchor, 'OI-20260101-IIII')).updated_since_proposal).toBe(true);
+    expect((await state(anchor, 'OI-20260101-FFFF')).updated_since_proposal).toBe(true);
     expect(await readFile(readmePath, 'utf8')).toBe(before);
 
     const restored = runCli(
-      ['edit', 'OI-20260101-IIII', '--title', '接入第三方账单'],
+      ['edit', 'OI-20260101-FFFF', '--title', '接入第三方账单'],
       { cwd: anchor.root, env: env(anchor) },
     );
     expect(restored.status, restored.stderr).toBe(0);
-    expect((await state(anchor, 'OI-20260101-IIII')).updated_since_proposal).toBe(false);
+    expect((await state(anchor, 'OI-20260101-FFFF')).updated_since_proposal).toBe(false);
     expect(await readFile(readmePath, 'utf8')).toBe(before);
   });
 
   it('validates and archives a real OpenSpec 1.10.0 change', async () => {
     const anchor = await createAnchor({ id: 'demo', openspec: true });
     cleanup.push(anchor);
-    await seed(anchor, 'OI-20260101-JJJJ');
-    const created = runCli(
-      ['handoff', 'OI-20260101-JJJJ', '--change', 'real-change', '--yes'],
-      { cwd: anchor.root, env: env(anchor) },
-    );
-    expect(created.status, created.stderr).toBe(0);
+    await seed(anchor, 'OI-20260101-GGGG');
+    await createDraftAndLink(anchor, 'OI-20260101-GGGG', 'real-change');
     const changeDir = path.join(anchor.root, 'openspec', 'changes', 'real-change');
     await writeFile(
       path.join(changeDir, 'proposal.md'),
@@ -371,13 +318,13 @@ describe('OpenSpec handoff', () => {
     const archivedName = archiveEntries.find((name) => name.endsWith('-real-change'));
     expect(archivedName).toBeTruthy();
     await access(path.join(archiveRoot, archivedName!));
-    const handoff = await state(anchor, 'OI-20260101-JJJJ');
+    const handoff = await state(anchor, 'OI-20260101-GGGG');
     expect(handoff.archived_pending).toBe(true);
-    const confirmed = runCli(['confirm', 'OI-20260101-JJJJ'], {
+    const confirmed = runCli(['confirm', 'OI-20260101-GGGG'], {
       cwd: anchor.root,
       env: env(anchor),
     });
     expect(confirmed.status, confirmed.stderr).toBe(0);
-    expect((await readIssue(anchor, 'OI-20260101-JJJJ')).status).toBe('closed');
+    expect((await readIssue(anchor, 'OI-20260101-GGGG')).status).toBe('closed');
   });
 });

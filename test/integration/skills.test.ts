@@ -8,6 +8,7 @@ import { createTempDir, runCli, type TempDir } from '../helpers/fixtures.js';
 const cleanup: TempDir[] = [];
 const skillNames = [
   'openissue-capture',
+  'openissue-grill-me',
   'openissue-handoff',
   'openissue-onboard',
   'openissue-triage',
@@ -54,7 +55,7 @@ async function readManifest(root: TempDir): Promise<{
 }
 
 describe('bundled skills', () => {
-  it('lists the four workflows and supported tools', async () => {
+  it('lists all bundled workflows and supported tools', async () => {
     const root = await createTempDir('openissue-skills-');
     cleanup.push(root);
     const result = await run(root, ['skills', 'list', '--json']);
@@ -75,6 +76,22 @@ describe('bundled skills', () => {
     expect(handoff).toContain('openissue handoff');
     expect(handoff).toContain('openissue confirm');
     expect(handoff).toContain('不伪造 OpenSpec');
+    expect(handoff).not.toContain('openissue handoff <id> --change');
+
+    const grill = await readFile(path.resolve('skills', 'openissue-grill-me', 'SKILL.md'), 'utf8');
+    expect(grill).toContain('openissue start <id>');
+    expect(grill).toContain('--from-interview');
+    expect(grill).toContain('proposal');
+    expect(grill).toContain('specs');
+    expect(grill).toContain('design');
+    expect(grill).toContain('结束访谈并生成任务');
+    expect(grill).toContain('生成 tasks 后停止');
+    expect(grill).toContain('标准 propose');
+    expect(grill).toContain('RED');
+    expect(grill).toContain('GREEN');
+    expect(grill).toContain('REFACTOR');
+    expect(grill).toContain('INTEGRATE');
+    expect(output.skills.some((skill) => skill.name === 'openspec-grill-me')).toBe(false);
   });
 
   it('matches package version with the single version source', async () => {
@@ -98,12 +115,17 @@ describe('skills install', () => {
     };
     expect(output.tools).toHaveLength(1);
     expect(output.tools[0]!.tool).toBe('agents');
-    expect(output.tools[0]!.files.filter((file) => file.action === 'installed')).toHaveLength(4);
+    expect(output.tools[0]!.files.filter((file) => file.action === 'installed')).toHaveLength(
+      skillNames.length,
+    );
     for (const name of skillNames) {
       const file = path.join(root.root, '.agents', 'skills', name, 'SKILL.md');
       expect(await exists(file), file).toBe(true);
       expect(await readFile(file, 'utf8')).toContain(`name: ${name}`);
     }
+    expect(
+      await exists(path.join(root.root, '.agents', 'skills', 'openspec-grill-me')),
+    ).toBe(false);
     const manifest = await readManifest(root);
     expect(manifest.schema).toBe(1);
     expect(manifest.generator).toBe('openissue');
@@ -257,6 +279,27 @@ describe('skills install', () => {
     const result = await run(root, ['skills', 'update']);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('尚未安装配套 skills');
+  });
+
+  it('reports the legacy openspec-grill-me directory and migrates only with force', async () => {
+    const root = await createTempDir('openissue-skills-');
+    cleanup.push(root);
+    const legacyDir = path.join(root.root, '.agents', 'skills', 'openspec-grill-me');
+    await mkdir(legacyDir, { recursive: true });
+    const legacyFile = path.join(legacyDir, 'SKILL.md');
+    await writeFile(legacyFile, 'legacy user skill\n', 'utf8');
+
+    const conflict = await run(root, ['skills', 'install']);
+    expect(conflict.status).not.toBe(0);
+    expect(conflict.stderr).toContain('未托管');
+    expect(await readFile(legacyFile, 'utf8')).toBe('legacy user skill\n');
+
+    const forced = await run(root, ['skills', 'install', '--force']);
+    expect(forced.status, forced.stderr).toBe(0);
+    await expect(access(legacyDir)).rejects.toThrow();
+    expect(
+      await exists(path.join(root.root, '.agents', 'skills', 'openissue-grill-me', 'SKILL.md')),
+    ).toBe(true);
   });
 
   it('refuses to adopt an unmanaged file without force and reports missing files', async () => {

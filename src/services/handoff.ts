@@ -1,21 +1,27 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { readFile, readdir, rm } from 'node:fs/promises';
+import { readFile, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import YAML from 'yaml';
-import { OpenIssueError, errorMessage } from '../core/errors.js';
+import { OpenIssueError } from '../core/errors.js';
 import { contentHash } from '../core/hash.js';
 import { isRecord } from '../core/guards.js';
-import { isValidChangeId } from '../core/id.js';
+import { isValidChangeId, suggestChangeId } from '../core/id.js';
 import type { Issue, ProposalLink } from '../core/types.js';
 import { writeTextAtomic } from '../storage/atomic.js';
-import { mutateIssue } from '../storage/issue.js';
+import { mutateIssue, publicIssue } from '../storage/issue.js';
 
-export type OpenspecRunner = (args: string[], cwd: string) => Promise<string>;
+export interface InterviewState {
+  status: 'incomplete';
+  issue: string;
+  started_at: string;
+  updated_at: string;
+}
 
 export interface ProposalState extends ProposalLink {
   state: 'active' | 'archived' | 'missing';
   updated_since_proposal: boolean;
+  interview?: InterviewState;
+  interview_unknown?: boolean;
 }
 
 export interface HandoffState {
@@ -23,16 +29,10 @@ export interface HandoffState {
   archived_pending: boolean;
   link_invalid: boolean;
   updated_since_proposal: boolean;
-}
-
-export interface CreateProposalInput {
-  anchorRoot: string;
-  productDir: string;
-  productId: string;
-  issue: Issue;
-  changeId: string;
-  focus: string;
-  runner?: OpenspecRunner;
+  interview_incomplete: boolean;
+  interview_unknown: boolean;
+  interview_change_ids: string[];
+  resume_change_id?: string;
 }
 
 export interface LinkProposalInput {
@@ -41,17 +41,167 @@ export interface LinkProposalInput {
   productId: string;
   issue: Issue;
   changeId: string;
+  fromInterview?: boolean;
 }
 
-export function composeChangeDescription(issue: Issue, focus: string): string {
-  const parts = [`需求 ${issue.id}：${issue.title}`];
-  if (issue.description.trim()) parts.push(issue.description.trim());
-  if (focus.trim()) parts.push(`当前重点：${focus.trim()}`);
-  return parts.join('\n\n');
+export interface StartProposal {
+  id: string;
+  path: string;
+  state: 'active' | 'archived' | 'missing';
+  interview_status: 'none' | 'incomplete' | 'unknown';
 }
 
-export async function createProposal(input: CreateProposalInput): Promise<Issue> {
-  const { anchorRoot, productDir, productId, issue, changeId, focus } = input;
+export interface StartContext {
+  issue: Record<string, unknown>;
+  focus: string;
+  suggested_change_id: string;
+  active_proposals: StartProposal[];
+  archived_proposals: StartProposal[];
+  missing_proposals: StartProposal[];
+  selection_required: boolean;
+  resume_change_id?: string;
+  interview: {
+    status: 'none' | 'incomplete' | 'unknown';
+    change_ids: string[];
+  };
+  skill_available: boolean;
+  instruction: string;
+}
+
+export interface BuildStartContextInput {
+  issue: Issue;
+  focus: string;
+  handoff?: HandoffState;
+  changeId?: string;
+  skillAvailable?: boolean;
+}
+
+export function emptyHandoffState(): HandoffState {
+  return {
+    proposals: [],
+    archived_pending: false,
+    link_invalid: false,
+    updated_since_proposal: false,
+    interview_incomplete: false,
+    interview_unknown: false,
+    interview_change_ids: [],
+  };
+}
+
+export function buildStartContext(input: BuildStartContextInput): StartContext {
+  const handoff = input.handoff ?? emptyHandoffState();
+  const suggested = input.changeId?.trim() || suggestChangeId(input.issue.title, input.issue.id);
+  if (!isValidChangeId(suggested)) {
+    throw new OpenIssueError(
+      '变更标识只能包含小写字母、数字与连字符，且不能以连字符开头',
+      'INVALID_CHANGE_ID',
+    );
+  }
+  const toStartProposal = (proposal: ProposalState): StartProposal => ({
+    id: proposal.id,
+    path: proposal.path,
+    state: proposal.state,
+    interview_status: proposal.interview
+      ? 'incomplete'
+      : proposal.interview_unknown
+        ? 'unknown'
+        : 'none',
+  });
+  const active = handoff.proposals.filter((proposal) => proposal.state === 'active').map(toStartProposal);
+  const archived = handoff.proposals
+    .filter((proposal) => proposal.state === 'archived')
+    .map(toStartProposal);
+  const missing = handoff.proposals
+    .filter((proposal) => proposal.state === 'missing')
+    .map(toStartProposal);
+  const skillAvailable = input.skillAvailable ?? true;
+  const interviewStatus: StartContext['interview']['status'] = handoff.interview_incomplete
+    ? 'incomplete'
+    : handoff.interview_unknown
+      ? 'unknown'
+      : 'none';
+  return {
+    issue: publicIssue(input.issue),
+    focus: input.focus,
+    suggested_change_id: suggested,
+    active_proposals: active,
+    archived_proposals: archived,
+    missing_proposals: missing,
+    selection_required: active.length > 1,
+    ...(handoff.resume_change_id ? { resume_change_id: handoff.resume_change_id } : {}),
+    interview: {
+      status: interviewStatus,
+      change_ids: handoff.interview_change_ids,
+    },
+    skill_available: skillAvailable,
+    instruction: buildStartInstruction({
+      issue: input.issue,
+      focus: input.focus,
+      suggested,
+      active,
+      archived,
+      missing,
+      ...(handoff.resume_change_id ? { resumeChangeId: handoff.resume_change_id } : {}),
+      selectionRequired: active.length > 1,
+      skillAvailable,
+    }),
+  };
+}
+
+function buildStartInstruction(input: {
+  issue: Issue;
+  focus: string;
+  suggested: string;
+  active: StartProposal[];
+  archived: StartProposal[];
+  missing: StartProposal[];
+  resumeChangeId?: string;
+  selectionRequired: boolean;
+  skillAvailable: boolean;
+}): string {
+  const lines = [
+    '请使用 openissue-grill-me 技能开始产品决策访谈。',
+    `需求：${input.issue.id} ${input.issue.title}`,
+  ];
+  if (input.issue.description.trim()) lines.push(`描述：${input.issue.description.trim()}`);
+  if (input.focus.trim()) lines.push(`当前重点：${input.focus.trim()}`);
+  if (!input.skillAvailable) {
+    lines.push('当前仓库未安装 openissue-grill-me；请先运行 openissue skills install --tool agents。');
+  }
+  if (input.selectionRequired) {
+    const ids = input.active.map((proposal) => proposal.id).join('、');
+    lines.push(
+      `检测到多个活跃提案：${ids}。先让用户选择要接管的提案，不要自行选择，也不要创建第二份草稿。选择后运行 openissue handoff ${input.issue.id} --link <change> --from-interview 补写访谈标记。`,
+    );
+  } else if (input.active.length === 1) {
+    const active = input.active[0]!;
+    if (active.interview_status === 'incomplete') {
+      lines.push(`继续未完成草稿 ${active.id}；不要创建第二份草稿。`);
+    } else {
+      lines.push(
+        `接管活跃提案 ${active.id}；运行 openissue handoff ${input.issue.id} --link ${active.id} --from-interview 补写访谈标记，保留已有正文。`,
+      );
+    }
+  } else if (input.archived.length > 0) {
+    const ids = input.archived.map((proposal) => proposal.id).join('、');
+    lines.push(`已有归档提案：${ids}。归档提案不能被接管；由用户决定重新关联或新建。`);
+  } else {
+    lines.push(
+      `创建草稿 ${input.suggested}：运行 openspec new change ${input.suggested} --description "<需求上下文>" --json，然后运行 openissue handoff ${input.issue.id} --link ${input.suggested} --from-interview。`,
+    );
+  }
+  if (input.missing.length > 0) {
+    lines.push(`关联失效的提案：${input.missing.map((proposal) => proposal.id).join('、')}；不要自动覆盖，先让用户重新关联或明确新建。`);
+  }
+  lines.push('访谈中每确认一项决策，立即按归属写入 proposal、specs 或 design，让用户看到 diff。');
+  lines.push('tasks 仅在用户明确执行“结束访谈并生成任务”后生成；生成后停止，不进入实现。');
+  lines.push('只有用户明确要求实现后，才进入标准 OpenSpec apply。');
+  lines.push('来自 OpenIssue 需求的规划使用本流程；没有需求来源的 OpenSpec 工作继续使用标准 propose。');
+  return lines.join('\n');
+}
+
+export async function linkProposal(input: LinkProposalInput): Promise<Issue> {
+  const { anchorRoot, productDir, productId, issue, changeId, fromInterview = false } = input;
   if (!isValidChangeId(changeId)) {
     throw new OpenIssueError(
       '变更标识只能包含小写字母、数字与连字符，且不能以连字符开头',
@@ -60,62 +210,23 @@ export async function createProposal(input: CreateProposalInput): Promise<Issue>
   }
   ensureOpenspec(anchorRoot);
   const changeDir = path.join(anchorRoot, 'openspec', 'changes', changeId);
-  if (existsSync(changeDir) || (await findArchivedChange(anchorRoot, changeId))) {
-    throw new OpenIssueError(`提案 ${changeId} 已存在`, 'CHANGE_NAME_CONFLICT');
-  }
-  if (issue.proposals.some((proposal) => proposal.id === changeId)) {
-    throw new OpenIssueError(`需求已关联提案 ${changeId}`, 'PROPOSAL_ALREADY_LINKED');
-  }
-
-  const existedBefore = existsSync(changeDir);
-  const runner = input.runner ?? defaultOpenspecRunner;
-  const preserved = await preservedProposalLinks(anchorRoot, issue);
-  let created = false;
-  try {
-    const description = composeChangeDescription(issue, focus);
-    await runner(
-      ['new', 'change', changeId, '--description', description, '--json'],
-      anchorRoot,
-    );
-    created = true;
-    await addIssueToChangeMetadata(anchorRoot, changeId, issue.id);
-    const link: ProposalLink = {
-      id: changeId,
-      path: `openspec/changes/${changeId}`,
-      created_at: new Date().toISOString(),
-      snapshot_hash: contentHash(issue.title, issue.description),
-    };
-    return await mutateIssue(
-      productDir,
-      productId,
-      issue.id,
-      (current) => {
-        current.proposals = [...preserved, link];
-      },
-      { expectedUpdatedAt: issue.updated_at },
-    );
-  } catch (error) {
-    if (!existedBefore && (!created || existsSync(changeDir))) {
-      await rm(changeDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-    throw error;
-  }
-}
-
-export async function linkProposal(input: LinkProposalInput): Promise<Issue> {
-  const { anchorRoot, productDir, productId, issue, changeId } = input;
-  ensureOpenspec(anchorRoot);
-  const changeDir = path.join(anchorRoot, 'openspec', 'changes', changeId);
   if (!existsSync(changeDir)) {
     throw new OpenIssueError(`找不到活跃提案 ${changeId}`, 'CHANGE_NOT_FOUND');
   }
-  if (issue.proposals.some((proposal) => proposal.id === changeId)) {
-    throw new OpenIssueError(`需求已关联提案 ${changeId}`, 'PROPOSAL_ALREADY_LINKED');
+  const alreadyLinked = issue.proposals.some((proposal) => proposal.id === changeId);
+  if (alreadyLinked) {
+    if (!fromInterview) {
+      throw new OpenIssueError(`需求已关联提案 ${changeId}`, 'PROPOSAL_ALREADY_LINKED');
+    }
+    await markInterviewStarted(anchorRoot, changeId, issue.id);
+    return issue;
   }
   const original = await readChangeMetadata(anchorRoot, changeId);
   const preserved = await preservedProposalLinks(anchorRoot, issue);
   try {
-    await writeChangeMetadata(anchorRoot, changeId, addIssueId(original, issue.id));
+    let metadata = addIssueId(original, issue.id);
+    if (fromInterview) metadata = addInterviewMarker(metadata, issue.id, new Date().toISOString());
+    await writeChangeMetadata(anchorRoot, changeId, metadata);
     const link: ProposalLink = {
       id: changeId,
       path: `openspec/changes/${changeId}`,
@@ -137,6 +248,79 @@ export async function linkProposal(input: LinkProposalInput): Promise<Issue> {
   }
 }
 
+export async function markInterviewStarted(
+  anchorRoot: string,
+  changeId: string,
+  issueId: string,
+  now = new Date().toISOString(),
+): Promise<void> {
+  const metadata = await readChangeMetadata(anchorRoot, changeId);
+  await writeChangeMetadata(anchorRoot, changeId, addInterviewMarker(metadata, issueId, now));
+}
+
+export async function discardInterview(input: {
+  anchorRoot: string;
+  productDir: string;
+  productId: string;
+  issue: Issue;
+  changeId: string;
+}): Promise<Issue> {
+  const { anchorRoot, productDir, productId, issue, changeId } = input;
+  if (!isValidChangeId(changeId)) {
+    throw new OpenIssueError(
+      '变更标识只能包含小写字母、数字与连字符，且不能以连字符开头',
+      'INVALID_CHANGE_ID',
+    );
+  }
+  const link = issue.proposals.find((proposal) => proposal.id === changeId);
+  if (!link) throw new OpenIssueError(`需求未关联提案 ${changeId}`, 'PROPOSAL_NOT_LINKED');
+  const changeDir = path.join(anchorRoot, 'openspec', 'changes', changeId);
+  if (!existsSync(changeDir)) {
+    throw new OpenIssueError(`提案 ${changeId} 不在活跃变更中，不能丢弃`, 'CHANGE_NOT_FOUND');
+  }
+  const metadata = await readChangeMetadata(anchorRoot, changeId);
+  const parsed = parseInterviewMarker(metadata['x-openissue-interview']);
+  if (!parsed.state || parsed.state.status !== 'incomplete') {
+    throw new OpenIssueError(
+      `提案 ${changeId} 不是未完成的访谈草稿，不能丢弃`,
+      'NOT_INTERVIEW_DRAFT',
+    );
+  }
+  const backup = path.join(
+    anchorRoot,
+    'openspec',
+    'changes',
+    `.openissue-discard-${changeId}-${Date.now()}`,
+  );
+  await rename(changeDir, backup);
+  try {
+    const updated = await mutateIssue(
+      productDir,
+      productId,
+      issue.id,
+      (current) => {
+        current.proposals = current.proposals.filter((proposal) => proposal.id !== changeId);
+      },
+      { expectedUpdatedAt: issue.updated_at },
+    );
+    try {
+      await rm(backup, { recursive: true, force: true });
+    } catch (error) {
+      await mutateIssue(productDir, productId, issue.id, (current) => {
+        if (!current.proposals.some((proposal) => proposal.id === changeId)) {
+          current.proposals.push(link);
+        }
+      }).catch(() => undefined);
+      await rename(backup, changeDir).catch(() => undefined);
+      throw error;
+    }
+    return updated;
+  } catch (error) {
+    await rename(backup, changeDir).catch(() => undefined);
+    throw error;
+  }
+}
+
 export async function readHandoffState(
   anchorRoot: string,
   issue: Issue,
@@ -146,13 +330,30 @@ export async function readHandoffState(
     const active = existsSync(path.join(anchorRoot, link.path));
     const archived = active ? undefined : await findArchivedChange(anchorRoot, link.id);
     const state = active ? 'active' : archived ? 'archived' : 'missing';
+    let interview: InterviewState | undefined;
+    let interviewUnknown = false;
+    if (state !== 'missing') {
+      try {
+        const metadata = await readChangeMetadata(anchorRoot, link.id);
+        const parsed = parseInterviewMarker(metadata['x-openissue-interview']);
+        interview = parsed.state;
+        interviewUnknown = parsed.unknown;
+      } catch {
+        interviewUnknown = true;
+      }
+    }
     proposals.push({
       ...link,
       state,
       updated_since_proposal:
         contentHash(issue.title, issue.description) !== link.snapshot_hash,
+      ...(interview ? { interview } : {}),
+      ...(interviewUnknown ? { interview_unknown: true } : {}),
     });
   }
+  const activeInterviewIds = proposals
+    .filter((proposal) => proposal.state === 'active' && proposal.interview)
+    .map((proposal) => proposal.id);
   return {
     proposals,
     archived_pending:
@@ -161,6 +362,12 @@ export async function readHandoffState(
       proposals.every((proposal) => proposal.state === 'archived'),
     link_invalid: proposals.some((proposal) => proposal.state === 'missing'),
     updated_since_proposal: proposals.some((proposal) => proposal.updated_since_proposal),
+    interview_incomplete: activeInterviewIds.length > 0,
+    interview_unknown: proposals.some(
+      (proposal) => proposal.state !== 'missing' && proposal.interview_unknown,
+    ),
+    interview_change_ids: activeInterviewIds,
+    ...(activeInterviewIds.length === 1 ? { resume_change_id: activeInterviewIds[0]! } : {}),
   };
 }
 
@@ -253,16 +460,10 @@ async function preservedProposalLinks(
   const state = await readHandoffState(anchorRoot, issue);
   return state.proposals
     .filter((proposal) => proposal.state !== 'missing')
-    .map(({ state: _state, updated_since_proposal: _updated, ...link }) => link);
-}
-
-async function addIssueToChangeMetadata(
-  anchorRoot: string,
-  changeId: string,
-  issueId: string,
-): Promise<void> {
-  const metadata = await readChangeMetadata(anchorRoot, changeId);
-  await writeChangeMetadata(anchorRoot, changeId, addIssueId(metadata, issueId));
+    .map(
+      ({ state: _state, updated_since_proposal: _updated, interview: _interview, interview_unknown: _unknown, ...link }) =>
+        link,
+    );
 }
 
 function addIssueId(
@@ -278,6 +479,57 @@ function addIssueId(
   return { ...metadata, 'x-openissue-issues': current };
 }
 
+function addInterviewMarker(
+  metadata: Record<string, unknown>,
+  issueId: string,
+  now: string,
+): Record<string, unknown> {
+  const current = isRecord(metadata['x-openissue-interview'])
+    ? metadata['x-openissue-interview']
+    : {};
+  const startedAt =
+    typeof current.started_at === 'string' && current.started_at.trim()
+      ? current.started_at
+      : now;
+  return {
+    ...metadata,
+    'x-openissue-interview': {
+      ...current,
+      status: 'incomplete',
+      issue: issueId,
+      started_at: startedAt,
+      updated_at: now,
+    },
+  };
+}
+
+function parseInterviewMarker(value: unknown): {
+  state?: InterviewState;
+  unknown: boolean;
+} {
+  if (value === undefined) return { unknown: false };
+  if (!isRecord(value)) return { unknown: true };
+  if (typeof value.status !== 'string') return { unknown: true };
+  if (value.status !== 'incomplete') return { unknown: false };
+  if (
+    typeof value.issue !== 'string' ||
+    !value.issue.trim() ||
+    typeof value.started_at !== 'string' ||
+    typeof value.updated_at !== 'string'
+  ) {
+    return { unknown: true };
+  }
+  return {
+    state: {
+      status: 'incomplete',
+      issue: value.issue,
+      started_at: value.started_at,
+      updated_at: value.updated_at,
+    },
+    unknown: false,
+  };
+}
+
 function ensureOpenspec(anchorRoot: string): void {
   if (!existsSync(path.join(anchorRoot, 'openspec', 'config.yaml'))) {
     throw new OpenIssueError(
@@ -285,65 +537,4 @@ function ensureOpenspec(anchorRoot: string): void {
       'OPENSPEC_NOT_INITIALIZED',
     );
   }
-}
-
-export async function defaultOpenspecRunner(
-  args: string[],
-  cwd: string,
-): Promise<string> {
-  const command = openspecCommand(args);
-  try {
-    return execFileSync(command.file, command.args, {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch (error) {
-    const stderr =
-      isRecord(error) && typeof error.stderr === 'string' ? error.stderr.trim() : '';
-    const stdout =
-      isRecord(error) && typeof error.stdout === 'string' ? error.stdout.trim() : '';
-    throw new OpenIssueError(
-      `OpenSpec 命令失败：${stderr || stdout || errorMessage(error)}`,
-      'OPENSPEC_FAILED',
-    );
-  }
-}
-
-function openspecCommand(args: string[]): { file: string; args: string[] } {
-  const configured = process.env.OPENSPEC_BIN?.trim();
-  if (configured) {
-    if (configured.endsWith('.js') || configured.endsWith('.mjs') || configured.endsWith('.cjs')) {
-      return { file: process.execPath, args: [configured, ...args] };
-    }
-    return { file: configured, args };
-  }
-  if (process.platform === 'win32') {
-    const candidate = path.join(
-      process.env.APPDATA ?? '',
-      'npm',
-      'node_modules',
-      '@fission-ai',
-      'openspec',
-      'bin',
-      'openspec.js',
-    );
-    if (existsSync(candidate)) {
-      return { file: process.execPath, args: [candidate, ...args] };
-    }
-    return {
-      file: process.env.ComSpec ?? 'cmd.exe',
-      args: ['/d', '/s', '/c', `openspec ${args.map(quoteCmdArgument).join(' ')}`],
-    };
-  }
-  return { file: 'openspec', args };
-}
-
-function quoteCmdArgument(value: string): string {
-  const safe = value
-    .replace(/"/g, "'")
-    .replace(/%/g, '％')
-    .replace(/[\r\n]+/g, ' ')
-    .replace(/[&|<>^]/g, ' ');
-  return `"${safe}"`;
 }

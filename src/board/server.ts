@@ -231,17 +231,34 @@ function serializeItem(data: BoardData, item: EvaluatedIssue): Record<string, un
     ...(item.blocked_reason ? { blocked_reason: item.blocked_reason } : {}),
     ...(item.input_hash ? { input_hash: item.input_hash } : {}),
     ...(item.judged_at ? { judged_at: item.judged_at } : {}),
+    ...(data.startContexts.has(item.issue.id)
+      ? { start_context: data.startContexts.get(item.issue.id)! }
+      : {}),
     ...handoffFields(board),
   };
 }
 
 function handoffFields(handoff: HandoffState | undefined): Record<string, unknown> {
-  if (!handoff) return { proposals: [], archived_pending: false, link_invalid: false, updated_since_proposal: false };
+  if (!handoff) {
+    return {
+      proposals: [],
+      archived_pending: false,
+      link_invalid: false,
+      updated_since_proposal: false,
+      interview_incomplete: false,
+      interview_unknown: false,
+      interview_change_ids: [],
+    };
+  }
   return {
     proposals: handoff.proposals,
     archived_pending: handoff.archived_pending,
     link_invalid: handoff.link_invalid,
     updated_since_proposal: handoff.updated_since_proposal,
+    interview_incomplete: handoff.interview_incomplete,
+    interview_unknown: handoff.interview_unknown,
+    interview_change_ids: handoff.interview_change_ids,
+    ...(handoff.resume_change_id ? { resume_change_id: handoff.resume_change_id } : {}),
   };
 }
 

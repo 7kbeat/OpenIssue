@@ -128,6 +128,12 @@ function renderCard(item: BoardItem, data: BoardData, filters: BoardFilters): st
     item.evaluated.stale ? '<span class="badge stale" data-testid="stale-badge">待刷新</span>' : '',
     item.evaluated.dependency_floor ? '<span class="badge floor" data-testid="floor-badge">依赖下限</span>' : '',
     item.evaluated.blocked ? '<span class="badge blocked" data-testid="blocked-badge">被阻塞</span>' : '',
+    handoff?.interview_incomplete
+      ? '<span class="badge interview" data-testid="interview-badge">访谈未完成</span>'
+      : '',
+    handoff?.interview_unknown
+      ? '<span class="badge interview" data-testid="interview-unknown-badge">访谈状态未知</span>'
+      : '',
   ].join('');
   const archivedPrompt = handoff?.archived_pending
     ? `<div class="notice" data-testid="archived-prompt">提案已归档，待确认完成
@@ -145,6 +151,14 @@ function renderCard(item: BoardItem, data: BoardData, filters: BoardFilters): st
   const snapshotUpdated = handoff?.updated_since_proposal
     ? '<div class="notice" data-testid="snapshot-updated">创建提案后有更新</div>'
     : '';
+  const startEntry = item.start
+    ? `<details class="start-entry" data-testid="start-entry">
+        <summary>开始 OpenSpec</summary>
+        <p>访谈在 Agent 对话中继续。复制下面的上下文交给 Agent：</p>
+        ${item.start.skill_available ? '' : '<p class="notice danger" data-testid="interview-skill-missing">当前仓库未安装 openissue-grill-me。先运行 <code>openissue skills install --tool agents</code>。</p>'}
+        <pre data-testid="start-context">${escapeHtml(item.start.instruction)}</pre>
+      </details>`
+    : '';
   const description = issue.description
     ? `<p class="description" data-testid="issue-description">${highlight(issue.description, filters.q)}</p>`
     : '';
@@ -160,7 +174,7 @@ function renderCard(item: BoardItem, data: BoardData, filters: BoardFilters): st
     ${description}
     <div class="deps">${waiting}${blocking}${item.evaluated.blocked_reason && item.waiting.length === 0 ? `<p data-testid="blocked-reason">${escapeHtml(item.evaluated.blocked_reason)}</p>` : ''}</div>
     ${proposals ? `<ul class="proposals" data-testid="issue-proposals">${proposals}</ul>` : ''}
-    ${archivedPrompt}${invalidLink}${snapshotUpdated}
+    ${archivedPrompt}${invalidLink}${snapshotUpdated}${startEntry}
     <p class="meta" data-testid="issue-meta">作者 ${escapeHtml(issue.author)} · 创建 ${escapeHtml(issue.created_at)} · 更新 ${escapeHtml(issue.updated_at)}</p>
     <div class="actions">
       <form method="post" action="/issues/${encodeURIComponent(issue.id)}/tier" class="inline-form">
@@ -287,6 +301,7 @@ input[type="search"] { min-width: 220px; }
 .badge.stale { border-color: #b28a3e; color: #7a5a1c; }
 .badge.floor { border-color: #5c8b7b; color: #356153; }
 .badge.blocked { border-color: #b26b6b; color: #8a3d3d; }
+.badge.interview { border-color: #7b8bc4; color: #475a8f; }
 .reason { margin: 4px 0 8px; }
 .description { color: #444a52; white-space: pre-wrap; }
 .deps p { margin: 4px 0; font-size: 13px; color: #555b63; }
@@ -297,6 +312,9 @@ input[type="search"] { min-width: 220px; }
 .notice { margin: 8px 0; padding: 8px 10px; border: 1px solid #d8c08a; background: #fffbf0; border-radius: 8px; font-size: 13px; }
 .notice.danger { border-color: #d8a3a3; background: #fff7f7; }
 .notice form { display: inline-flex; gap: 6px; margin-top: 6px; }
+.start-entry { margin: 10px 0; border: 1px solid #c7d0dc; background: #f7f9fc; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+.start-entry summary { cursor: pointer; font-weight: 600; }
+.start-entry pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #fff; padding: 10px; border-radius: 6px; }
 .empty { color: #6b6f76; font-size: 14px; }
 .error { color: #a12626; }
 mark { background: #ffe58a; color: inherit; padding: 0 1px; }

@@ -38,12 +38,13 @@ pnpm e2e:product
 
 ## 配套 Agent skills
 
-OpenIssue 随包提供四份 Agent workflow skills：
+OpenIssue 随包提供五份 Agent workflow skills：
 
 - `openissue-onboard`：初始化产品、登记成员仓库、安装 skills；
 - `openissue-capture`：把想法或 bug 捕获为需求，只记录不实现；
 - `openissue-triage`：按项目事实、依赖与手动覆盖审阅优先级；
-- `openissue-handoff`：把成熟需求交给 OpenSpec，归档后由用户确认完成。
+- `openissue-grill-me`：从成熟需求开始产品决策访谈，自动创建提案草稿并增量写入 proposal/specs/design；用户明确结束访谈后才生成 TDD tasks；
+- `openissue-handoff`：重新关联已有提案，并在全部关联提案归档后由用户确认完成。
 
 查看并安装：
 
@@ -219,19 +220,33 @@ openissue reopen OI-20261120-ABCD
 
 ### 10. 交给 OpenSpec
 
-创建新提案：
+从需求开始产品决策访谈：
 
 ```bash
-openissue handoff OI-20261120-ABCD --change billing-integration
+openissue start OI-20261120-ABCD
+openissue start OI-20261120-ABCD --json
 ```
 
-或关联已有活跃提案：
+`start` 只输出需求上下文与可交给 Agent 的启动指令，不创建提案、不改需求。把输出交给 Agent 后，`openissue-grill-me` 会：
+
+1. 用 `openspec new change` 创建提案草稿；
+2. 用 `openissue handoff <id> --link <change> --from-interview` 建立关联并写入 `x-openissue-issues` 与 `x-openissue-interview`；
+3. 每确认一项决策就增量写入 proposal、specs 或 design；
+4. 只有用户明确说“结束访谈并生成任务”后才写 tasks，生成后停止。
+
+需求保持打开；访谈未完成会同时显示在需求与草稿上。再次运行 `start` 会继续同一草稿；丢弃草稿必须二次确认：
+
+```bash
+openissue start OI-20261120-ABCD --discard <change-id> --yes
+```
+
+`handoff --change` 不再直接创建提案，会提示改用 `start`。只有重新关联已有活跃提案时仍使用：
 
 ```bash
 openissue handoff OI-20261120-ABCD --link existing-change
 ```
 
-创建时会把需求标题、描述与当前重点写入 OpenSpec 的变更 README，并在 `.openspec.yaml` 写入 `x-openissue-issues`。不会自动生成完整的规范、设计或任务；需求保持打开。
+该路径会明确提示跳过了产品决策访谈。关联时只新增关联信息，不复制或改写提案内容。
 
 当全部关联提案归档后：
 
@@ -300,7 +315,13 @@ OpenIssue 不会自动修复或丢弃无法解析的记录。
 安装或更新发现目标文件不是 OpenIssue 上次写入的版本。先确认差异；确实要覆盖时使用 `openissue skills install --force` 或 `openissue skills update --force`。
 
 **`尚未安装配套 skills`**  
-先运行 `openissue skills install`，或用 `--tool <目标>` 指定要安装/更新的目录。
+先运行 `openissue skills install`，或用 `--tool <目标>` 指定要安装/更新的目录。`openissue start` 需要已安装 `openissue-grill-me`；缺失时会提示安装或更新。
+
+**`handoff 不再直接创建提案`**  
+使用 `openissue start <id>` 进入产品决策访谈。`handoff --change` 已被拒绝；只有重新关联已有提案才使用 `handoff --link`。
+
+**`访谈未完成`**  
+需求已关联一个访谈草稿，但尚未生成 tasks。运行 `openissue start <id>` 继续同一草稿；需要放弃时使用 `--discard <change-id> --yes`，执行前会要求二次确认。
 
 **看板端口被占用**  
 换一个端口：`openissue board --port 4311`。启动失败不会影响命令行。

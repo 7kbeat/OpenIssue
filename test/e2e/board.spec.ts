@@ -40,6 +40,13 @@ test('renders groups, reasons, dependencies, links, and no capture controls', as
   await expect(high.getByTestId('snapshot-updated')).toBeVisible();
   await expect(high.getByTestId('issue-proposals')).toContainText('linked-change');
   await expect(high.getByTestId('issue-proposals')).toContainText('在途');
+  await expect(high.getByTestId('interview-badge')).toHaveText('访谈未完成');
+  await expect(high.getByTestId('start-entry')).toBeVisible();
+  await high.getByTestId('start-entry').locator('summary').click();
+  await expect(high.getByTestId('start-context')).toContainText(
+    '继续未完成草稿 linked-change',
+  );
+  await expect(high.getByTestId('start-context')).toContainText('结束访谈并生成任务');
 
   const blocked = card(page, 'OI-20260101-BLOCK');
   await expect(blocked.getByTestId('blocked-badge')).toBeVisible();
@@ -164,7 +171,7 @@ async function seedBoard(target: TempDir): Promise<void> {
   await mkdir(active, { recursive: true });
   await writeFile(
     path.join(active, '.openspec.yaml'),
-    'schema: spec-driven\ncreated: 2026-01-01\n',
+    'schema: spec-driven\ncreated: 2026-01-01\nx-openissue-interview:\n  status: incomplete\n  issue: OI-20260101-HIGH\n  started_at: 2026-01-02T00:00:00.000Z\n  updated_at: 2026-01-02T00:00:00.000Z\n',
     'utf8',
   );
   await writeFile(path.join(active, 'proposal.md'), '# Linked\n', 'utf8');

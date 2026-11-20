@@ -5,7 +5,6 @@ import { access, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultOpenspecRunner } from '../dist/services/handoff.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cli = path.join(root, 'dist', 'cli.js');
@@ -40,6 +39,20 @@ function runJson(args, cwd) {
   return JSON.parse(start >= 0 ? output.slice(start) : output);
 }
 
+function runOpenspec(args, cwd) {
+  const bin = process.platform === 'win32' ? 'openspec.cmd' : 'openspec';
+  const result = spawnSync(bin, args, {
+    cwd,
+    env,
+    encoding: 'utf8',
+    shell: process.platform === 'win32',
+  });
+  if (result.status !== 0) {
+    throw new Error(`OpenSpec 失败：${args.join(' ')}\n${result.stdout}\n${result.stderr}`);
+  }
+  return result.stdout.trim();
+}
+
 function step(message) {
   console.log(`✓ ${message}`);
 }
@@ -48,7 +61,7 @@ try {
   await Promise.all([anchor, memberA, memberB].map((dir) => mkdir(dir, { recursive: true })));
   await Promise.all([memberA, memberB].map((dir) => mkdir(path.join(dir, '.git'))));
 
-  run(['init', '--id', 'demo', '--name', 'Demo E2E'], anchor);
+  run(['init', '--id', 'demo', '--name', 'Demo E2E', '--skills', 'agents'], anchor);
   step('在锚点仓库初始化产品');
 
   await Promise.all([
@@ -113,7 +126,20 @@ try {
   assert.deepEqual(applied.applied, [billing.id]);
   step('助手判断请求与写回完成');
 
-  run(['handoff', billing.id, '--change', 'billing-e2e', '--yes'], anchor);
+  const start = runJson(['start', billing.id, '--json'], anchor);
+  assert.equal(start.skill_available, true);
+  assert.match(start.instruction, /openissue-grill-me/);
+  runOpenspec(
+    ['new', 'change', 'billing-e2e', '--description', '账单接入访谈草稿', '--json'],
+    anchor,
+  );
+  run(
+    ['handoff', billing.id, '--link', 'billing-e2e', '--from-interview'],
+    anchor,
+  );
+  const linked = runJson(['show', billing.id, '--json'], anchor);
+  assert.equal(linked.handoff.interview_incomplete, true);
+  step('start 输出访谈上下文，草稿创建并关联为访谈未完成');
   const changeDir = path.join(anchor, 'openspec', 'changes', 'billing-e2e');
   await writeFile(
     path.join(changeDir, 'proposal.md'),
@@ -127,8 +153,8 @@ try {
     '## ADDED Requirements\n\n### Requirement: 账单\n\n系统 SHALL 支持账单接入。\n\n#### Scenario: 成功\n\n- **WHEN** 用户配置账单\n- **THEN** 系统保存配置\n',
     'utf8',
   );
-  await defaultOpenspecRunner(['validate', 'billing-e2e', '--strict'], anchor);
-  await defaultOpenspecRunner(['archive', 'billing-e2e', '--yes', '--json'], anchor);
+  runOpenspec(['validate', 'billing-e2e', '--strict'], anchor);
+  runOpenspec(['archive', 'billing-e2e', '--yes', '--json'], anchor);
   const archiveEntries = await readdir(path.join(anchor, 'openspec', 'changes', 'archive'));
   assert.ok(archiveEntries.some((name) => name.endsWith('-billing-e2e')));
   step('OpenSpec 提案通过校验并归档');

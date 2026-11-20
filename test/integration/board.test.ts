@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { startBoard } from '../../src/board/server.js';
 import { isRecord } from '../../src/core/guards.js';
@@ -105,6 +105,54 @@ describe('local board', () => {
     const cli = runCli(['priority', '--json'], { cwd: anchor.root, env: env(anchor) });
     expect(cli.status, cli.stderr).toBe(0);
     expect(cli.stdout).toContain('"effective_tier": "high"');
+  });
+
+  it('exposes interview state and the same start context as the CLI', async () => {
+    const anchor = await createAnchor({ id: 'demo', openspec: true, focus: '先跑通收件箱' });
+    cleanup.push(anchor);
+    const changeDir = path.join(anchor.root, 'openspec', 'changes', 'interview-draft');
+    await mkdir(changeDir, { recursive: true });
+    await writeFile(
+      path.join(changeDir, '.openspec.yaml'),
+      'schema: spec-driven\nx-openissue-interview:\n  status: incomplete\n  issue: OI-20260101-DDDD\n  started_at: 2026-01-01T00:00:00.000Z\n  updated_at: 2026-01-01T00:00:00.000Z\n',
+      'utf8',
+    );
+    await writeFile(path.join(changeDir, 'proposal.md'), '# Draft\n', 'utf8');
+    await writeFile(
+      path.join(anchor.root, 'openissue', 'issues', 'OI-20260101-DDDD.md'),
+      issueFixture({
+        id: 'OI-20260101-DDDD',
+        title: '访谈中的需求',
+        status: 'open',
+        product: 'demo',
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z',
+        author: '测试作者',
+        source: 'cli',
+        blocked_by: [],
+        proposals: [
+          {
+            id: 'interview-draft',
+            path: 'openspec/changes/interview-draft',
+            created_at: '2026-01-01T00:00:00.000Z',
+            snapshot_hash: 'deadbeef',
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const board = await boardFor(anchor);
+    const snapshot = await state(board.url);
+    if (!isRecord(snapshot.groups) || !Array.isArray(snapshot.groups.unassessed)) {
+      throw new Error('invalid groups');
+    }
+    const item = snapshot.groups.unassessed.find(
+      (candidate) => isRecord(candidate) && candidate.id === 'OI-20260101-DDDD',
+    );
+    if (!isRecord(item) || !isRecord(item.start_context)) throw new Error('missing start context');
+    expect(item.interview_incomplete).toBe(true);
+    expect(item.resume_change_id).toBe('interview-draft');
+    expect(item.start_context.instruction).toContain('继续未完成草稿 interview-draft');
   });
 
   it('binds only to 127.0.0.1 and keeps the CLI usable after a board failure', async () => {

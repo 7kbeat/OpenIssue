@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-OpenIssue is a Git-native requirement inbox for product engineers: capture an idea with only a title, keep the record in the product's spec/issue anchor repo, explain priority with rules + an external assistant, and hand off to OpenSpec when it matures. This repo is the CLI implementation; requirement data and OpenSpec plans live in the sibling anchor repo `../OpenIssue-spec-issue/`.
+OpenIssue is a Git-native requirement inbox for product engineers: capture an idea with only a title, keep the record in the product's spec/issue anchor repo, explain priority with rules + an external assistant, and enter OpenSpec through a product decision interview when it matures. This repo is the CLI implementation; requirement data and OpenSpec plans live in the sibling anchor repo `../OpenIssue-spec-issue/`.
 
 ## Project Overview
 
@@ -8,7 +8,7 @@ OpenIssue is a Git-native requirement inbox for product engineers: capture an id
 - Single-user, Git-shared. No accounts, assignees, comments, labels, milestones, notifications, GitHub Issues sync, or permanent delete.
 - Lifecycle is binary: `open` / `closed`; a closed issue must say `completed` or `wontdo` (+ note). "Deferred" = stay open.
 - User-facing text, errors, and docs are zh-CN. Code identifiers, error codes, YAML keys, and CLI flags are English.
-- All v1 surfaces are implemented: CLI, local board, assistant `prioritize --emit/--apply`, OpenSpec handoff, search/filter, and installable Agent skills. See [Implementation Status](#implementation-status).
+- All v1 surfaces are implemented: CLI, local board, assistant `prioritize --emit/--apply`, OpenSpec interview entry/handoff, search/filter, and installable Agent skills. See [Implementation Status](#implementation-status).
 
 ## Architecture & Data Flow
 
@@ -70,11 +70,11 @@ $OPENISSUE_HOME/registry.yaml      # default ~/.openissue; products.<id>.anchor_
 
 | Directory                           | Purpose                                                                                                                                                                                                      |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/commands/`                     | Command families: `register.ts` (init/register), `create.ts`, `edit.ts`, `list.ts` (list/show), `lifecycle.ts` (close/reopen), `dependencies.ts` (depend/undepend), `priority.ts`, `focus.ts`, `tier.ts`, `handoff.ts`, `board.ts`, `skills.ts`, `context.ts` |
+| `src/commands/`                     | Command families: `register.ts` (init/register), `create.ts`, `edit.ts`, `list.ts` (list/show), `lifecycle.ts` (close/reopen), `dependencies.ts` (depend/undepend), `priority.ts`, `focus.ts`, `tier.ts`, `start.ts` (interview entry/discard), `handoff.ts` (link/confirm), `board.ts`, `skills.ts`, `context.ts` |
 | `src/board/`                        | `server.ts` HTTP routes/actions, `data.ts` shared board data, `render.ts` server-rendered HTML |
-| `src/services/`                     | `handoff.ts` OpenSpec process invocation, change metadata (`x-openissue-issues`), archive detection, snapshot diff |
+| `src/services/`                     | `handoff.ts` OpenSpec metadata (`x-openissue-issues`, `x-openissue-interview`), interview entry context, resume/discard, archive detection, snapshot diff |
 | `src/skills/`                       | `catalog.ts` bundled asset loading + tool table; `manifest.ts` hash manifest; `install.ts` install/status/update |
-| `skills/`                           | Four installable `SKILL.md` workflows; included in npm `files` |
+| `skills/`                           | Five installable `SKILL.md` workflows; included in npm `files` |
 | `src/core/`                         | `types.ts` canonical schema; `errors.ts`; `id.ts` ID/slug generation; `paths.ts`; `hash.ts`; `author.ts`; `guards.ts`                                                                                        |
 | `src/domain/`                       | Pure rules: `dependencies.ts`, `priority.ts`, `assistant.ts`, `search.ts`, `lifecycle.ts`, `manual.ts`                                                                                                       |
 | `src/storage/`                      | `issue.ts`, `product.ts`, `registry.ts`, `workspace.ts`, `frontmatter.ts`, `atomic.ts`, `facts.ts`                                                                                                           |
@@ -133,10 +133,11 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 | `src/domain/dependencies.ts`                                       | `assertCanDepend`, cycle detection, open-blocker helpers                                |
 | `src/domain/assistant.ts`                                          | `--emit` request shape and `--apply` validation                         |
 | `src/domain/search.ts`                                             | Search and combination filters                                          |
-| `src/services/handoff.ts`                                          | OpenSpec create/link/archive/snapshot orchestration                     |
-| `src/skills/install.ts`                                            | Skill install/status/update; conflict preflight and manifest hashes     |
+| `src/commands/start.ts`                                            | `start` entry, agent instruction, active/interview state, discard gate  |
+| `src/services/handoff.ts`                                          | OpenSpec link/archive/snapshot orchestration and interview metadata     |
+| `src/skills/install.ts`                                            | Skill install/status/update; interview-skill availability check         |
 | `src/skills/catalog.ts`                                            | Bundled skill loading, frontmatter validation, tool/alias table        |
-| `skills/*/SKILL.md`                                                | Agent-facing workflows: onboard, capture, triage, handoff              |
+| `skills/*/SKILL.md`                                                | Agent-facing workflows: onboard, capture, triage, grill-me, handoff    |
 | `src/board/server.ts`                                              | Local HTTP server and API actions                                       |
 | `test/e2e/board.spec.ts`                                           | Playwright board/search/single-user coverage                            |
 | `src/core/types.ts`                                                | Canonical `Issue`, `ProductManifest`, `PriorityView*` shapes                                                            |
@@ -156,8 +157,8 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 
 ## Testing & QA
 
-- **Runner**: Vitest, `test/**/*.test.ts`, `test/e2e/**` excluded, 20s test/hook timeout. Current suite: 14 files / 74 tests, ~62s. No coverage thresholds.
-- **Layers**: `test/unit/paths.test.ts` (pure helpers), `test/fixtures.test.ts` (fixture smoke, invokes real `openspec`), `test/smoke.test.ts` (CLI version), `test/integration/{capture,edit,workspace,lifecycle,dependencies,priority,assistant,handoff,board,search,skills}.test.ts` (real CLI/board + temp dirs), `test/e2e/board.spec.ts` (Playwright).
+- **Runner**: Vitest, `test/**/*.test.ts`, `test/e2e/**` excluded, 20s test/hook timeout. Current suite: 15 files / 88 tests, ~23s. No coverage thresholds.
+- **Layers**: `test/unit/paths.test.ts` (pure helpers), `test/fixtures.test.ts` (fixture smoke, invokes real `openspec`), `test/smoke.test.ts` (CLI version), `test/integration/{capture,edit,workspace,lifecycle,dependencies,priority,assistant,handoff,grill-entry,board,search,skills}.test.ts` (real CLI/board + temp dirs), `test/e2e/board.spec.ts` (Playwright).
 - **Integration harness**: `runCli(args, { cwd, env })` spawns `node node_modules/tsx/dist/cli.mjs src/cli.ts …`; **no build required**. Always isolate with `OPENISSUE_HOME=<temp>/.home` and `OPENISSUE_AUTHOR=测试作者`. Track temp dirs and clean them in `afterEach` via `Promise.all(cleanup.splice(0).map(x => x.cleanup()))`.
 - **Assertions are behavioral**: exit status, zh-CN stderr substrings, on-disk YAML/body, and `--json` stdout. Tests deliberately assert raw file equality when a command must not mutate data. Prefer these over mocking internals.
 - **Cross-platform expectations**: every path-related change must work on Windows and POSIX; specs additionally require a POSIX-separator fixture (already covered by `workspace.test.ts`).
@@ -174,10 +175,11 @@ Implemented:
 - CLI capture/edit/list/show, lifecycle, dependencies, focus, manual tiers, priority display.
 - Local board with shared storage, filtering/search, tier/status/focus actions, archive confirmation, relinking, conflict area, and `127.0.0.1` binding.
 - Assistant protocol: `prioritize --emit` request with focus/facts/hashes and `--apply` validation with partial-result isolation.
-- OpenSpec handoff: create/link, `x-openissue-issues`, snapshot diff, archive detection, and explicit completion confirmation.
+- OpenSpec interview entry and handoff: `start`, active-proposal takeover, `x-openissue-interview` incomplete state, resume/discard, `--link` association, snapshot diff, archive detection, and explicit completion confirmation.
 - OpenSpec facts (specs, active/archived proposals, task progress), input-hash cache/staleness, and manual/rule precedence.
 - Cross-platform CI workflow, Playwright suite, and full-product end-to-end script.
-- Four installable Agent skills (`openissue-onboard/capture/triage/handoff`) with `openissue skills list|install|status|update`, hash manifest conflict protection, and `init --skills` support.
+- Five installable Agent skills (`openissue-onboard/capture/triage/grill-me/handoff`) with `openissue skills list|install|status|update`, hash manifest conflict protection, and `init --skills` support.
+- `openissue start` interview entry with active-proposal takeover, incomplete-interview resume/discard, Board copyable context, and `handoff --link` as the only manual association path.
 
 Known gaps / external conditions:
 

@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, readdir } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { OpenIssueError } from '../core/errors.js';
 import { VERSION } from '../core/version.js';
@@ -75,9 +75,15 @@ export async function installSkills(
   const now = options.now ?? new Date().toISOString();
   const plans: ToolPlan[] = [];
   const conflicts: Conflict[] = [];
+  const legacyRoots: string[] = [];
 
   for (const tool of tools) {
     const root = toolSkillsRoot(projectDir, tool);
+    const legacyRoot = path.join(root, 'openspec-grill-me');
+    if (await exists(legacyRoot)) {
+      if (options.force) legacyRoots.push(legacyRoot);
+      else conflicts.push({ path: legacyRoot, kind: 'unmanaged' });
+    }
     const manifest = await readSkillManifest(root);
     const files: PlannedFile[] = [];
     for (const skill of skills) {
@@ -115,6 +121,10 @@ export async function installSkills(
       `检测到未托管或已修改的 skills 文件，未写入任何内容：\n${details}\n确认覆盖时使用 --force。`,
       'SKILLS_CONFLICT',
     );
+  }
+
+  for (const legacyRoot of legacyRoots) {
+    await rm(legacyRoot, { recursive: true, force: true });
   }
 
   const results: ToolInstallResult[] = [];
@@ -177,6 +187,19 @@ export async function statusSkills(
     });
   }
   return results;
+}
+
+export async function hasCurrentSkill(projectDir: string, name: string): Promise<boolean> {
+  const skills = await loadBundledSkills();
+  const skill = skills.find((candidate) => candidate.name === name);
+  if (!skill) return false;
+  const tools = await detectInstalledSkillTools(projectDir);
+  for (const tool of tools) {
+    const current = await readOptional(path.join(toolSkillsRoot(projectDir, tool), name, 'SKILL.md'));
+    if (current === undefined) continue;
+    if (current === skill.content || hashSkillContent(current) === skill.sha256) return true;
+  }
+  return false;
 }
 
 export async function detectInstalledSkillTools(projectDir: string): Promise<SkillTool[]> {

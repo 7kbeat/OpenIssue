@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { OpenIssueError } from '../core/errors.js';
 import type { Issue } from '../core/types.js';
+import { readHandoffState } from '../services/handoff.js';
 import { loadIssues, publicIssue } from '../storage/issue.js';
 import { activeWorkspace } from './context.js';
 
@@ -75,8 +76,18 @@ export function registerListCommand(program: Command): void {
       const collection = await loadIssues(workspace.productDir, workspace.product.id);
       const issue = collection.issues.find((item) => item.id === id);
       if (!issue) throw new OpenIssueError(`找不到需求 ${id}`, 'ISSUE_NOT_FOUND');
+      const handoff =
+        issue.proposals.length > 0
+          ? await readHandoffState(workspace.anchorRoot, issue)
+          : undefined;
       if (options.json) {
-        console.log(JSON.stringify(publicIssue(issue), null, 2));
+        console.log(
+          JSON.stringify(
+            { ...publicIssue(issue), ...(handoff ? { handoff } : {}) },
+            null,
+            2,
+          ),
+        );
         return;
       }
       console.log(`${issue.id} ${issue.title}`);
@@ -85,6 +96,29 @@ export function registerListCommand(program: Command): void {
       console.log(`创建：${issue.created_at}`);
       if (issue.close) {
         console.log(`关闭原因：${closeLabel(issue.close.reason)}${issue.close.note ? ` — ${issue.close.note}` : ''}`);
+      }
+      if (handoff) {
+        console.log(
+          `提案：${handoff.proposals
+            .map(
+              (proposal) =>
+                `${proposal.id}（${proposal.state === 'active' ? '在途' : proposal.state === 'archived' ? '已归档' : '失效'}）`,
+            )
+            .join('、')}`,
+        );
+        if (issue.status === 'open' && handoff.interview_incomplete) {
+          console.log(`访谈未完成：${handoff.interview_change_ids.join('、')}`);
+          console.log(`继续：openissue start ${issue.id}`);
+        }
+        if (handoff.interview_unknown) {
+          console.log('访谈状态未知：关联提案的访谈标记无法读取');
+        }
+        if (handoff.archived_pending) {
+          console.log(`提案已归档，待确认完成：openissue confirm ${issue.id}`);
+        }
+        if (handoff.link_invalid) {
+          console.log('关联失效：在活跃变更与归档区都找不到关联提案');
+        }
       }
       const blocking = collection.issues.filter(
         (candidate) => candidate.status === 'open' && candidate.blocked_by.includes(issue.id),

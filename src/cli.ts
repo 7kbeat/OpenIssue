@@ -14,6 +14,7 @@ import { registerLifecycleCommands } from './commands/lifecycle.js';
 import { registerPriorityCommand } from './commands/priority.js';
 import { registerWorkspaceCommands } from './commands/register.js';
 import { registerSkillsCommands } from './commands/skills.js';
+import { registerStartCommand } from './commands/start.js';
 import { registerTierCommand } from './commands/tier.js';
 
 export { VERSION };
@@ -35,6 +36,7 @@ export function createProgram(): Command {
   registerPriorityCommand(program);
   registerFocusCommand(program);
   registerTierCommand(program);
+  registerStartCommand(program);
   registerHandoffCommands(program);
   registerWorkspaceCommands(program);
   registerSkillsCommands(program);
