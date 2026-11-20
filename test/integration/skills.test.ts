@@ -3,7 +3,12 @@ import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { VERSION } from '../../src/core/version.js';
-import { createTempDir, runCli, type TempDir } from '../helpers/fixtures.js';
+import {
+  createOpenspecSkeleton,
+  createTempDir,
+  runCli,
+  type TempDir,
+} from '../helpers/fixtures.js';
 
 const cleanup: TempDir[] = [];
 const skillNames = [
@@ -79,14 +84,26 @@ describe('bundled skills', () => {
     expect(handoff).not.toContain('openissue handoff <id> --change');
 
     const grill = await readFile(path.resolve('skills', 'openissue-grill-me', 'SKILL.md'), 'utf8');
+    expect(grill).toContain('OpenIssue Grill-Me: User-Centered Product Decision Interview');
+    expect(grill).toContain('## 1. Core Principles');
+    expect(grill).toContain('### 1.2 Separate verified facts from assumptions');
+    expect(grill).toContain('## 2. Required Question Format');
+    expect(grill).toContain('**Acceptance Criteria**');
+    expect(grill).toContain('## 3. Interview Workflow');
+    expect(grill).toContain('Phase C — Close the interview');
+    expect(grill).toContain('## 4. OpenSpec Decision Capture');
+    expect(grill).toContain('### 4.6 Validate and preserve traceability');
+    expect(grill).toContain('## 5. Quality Rules and Guardrails');
+    expect(grill).toContain('## 6. Illustrative Example');
+    expect(grill).toContain('## 7. Definition of Done');
     expect(grill).toContain('openissue start <id>');
     expect(grill).toContain('--from-interview');
     expect(grill).toContain('proposal');
     expect(grill).toContain('specs');
     expect(grill).toContain('design');
-    expect(grill).toContain('结束访谈并生成任务');
-    expect(grill).toContain('生成 tasks 后停止');
-    expect(grill).toContain('标准 propose');
+    expect(grill).toContain('End interview and generate tasks');
+    expect(grill).toContain('stops after tasks');
+    expect(grill).toContain('standard propose');
     expect(grill).toContain('RED');
     expect(grill).toContain('GREEN');
     expect(grill).toContain('REFACTOR');
@@ -331,41 +348,66 @@ describe('skills install', () => {
   });
 });
 
+async function createSingleRepo(prefix: string): Promise<TempDir> {
+  const root = await createTempDir(prefix);
+  cleanup.push(root);
+  await mkdir(path.join(root.root, '.git'));
+  await createOpenspecSkeleton(root.root);
+  return root;
+}
+
 describe('init integration', () => {
-  it('installs skills when requested and skips them by default or with none', async () => {
-    const withSkills = await createTempDir('openissue-init-skills-');
-    cleanup.push(withSkills);
-    const installed = await run(withSkills, ['init', '--id', 'demo', '--skills', 'agents']);
+  it('installs skills by default and skips them only with none', async () => {
+    const withSkills = await createSingleRepo('openissue-init-skills-');
+    const installed = await run(withSkills, [
+      'init',
+      '--id',
+      'demo',
+      '--name',
+      'Demo',
+      '--skills',
+      'agents',
+    ]);
     expect(installed.status, installed.stderr).toBe(0);
     expect(await exists(path.join(withSkills.root, 'openissue', 'product.yaml'))).toBe(true);
-    expect(await exists(path.join(withSkills.root, '.agents', 'skills', 'openissue-capture', 'SKILL.md'))).toBe(true);
+    expect(
+      await exists(path.join(withSkills.root, '.agents', 'skills', 'openissue-capture', 'SKILL.md')),
+    ).toBe(true);
 
-    const defaults = await createTempDir('openissue-init-default-');
-    cleanup.push(defaults);
-    const plain = await run(defaults, ['init', '--id', 'demo']);
+    const defaults = await createSingleRepo('openissue-init-default-');
+    const plain = await run(defaults, ['init', '--id', 'demo', '--name', 'Demo']);
     expect(plain.status, plain.stderr).toBe(0);
-    expect(await exists(path.join(defaults.root, '.agents'))).toBe(false);
-    expect(plain.stdout).toContain('openissue skills install');
+    expect(
+      await exists(path.join(defaults.root, '.agents', 'skills', 'openissue-capture', 'SKILL.md')),
+    ).toBe(true);
 
-    const skipped = await createTempDir('openissue-init-skip-');
-    cleanup.push(skipped);
-    const none = await run(skipped, ['init', '--id', 'demo', '--skills', 'none']);
+    const skipped = await createSingleRepo('openissue-init-skip-');
+    const none = await run(skipped, [
+      'init',
+      '--id',
+      'demo',
+      '--name',
+      'Demo',
+      '--skills',
+      'none',
+    ]);
     expect(none.status, none.stderr).toBe(0);
     expect(await exists(path.join(skipped.root, '.agents'))).toBe(false);
 
-    const bare = await createTempDir('openissue-init-bare-');
-    cleanup.push(bare);
-    const bareResult = await run(bare, ['init', '--id', 'demo', '--skills']);
+    const bare = await createSingleRepo('openissue-init-bare-');
+    const bareResult = await run(bare, ['init', '--id', 'demo', '--name', 'Demo', '--skills']);
     expect(bareResult.status, bareResult.stderr).toBe(0);
-    expect(await exists(path.join(bare.root, '.agents', 'skills', 'openissue-capture', 'SKILL.md'))).toBe(true);
+    expect(
+      await exists(path.join(bare.root, '.agents', 'skills', 'openissue-capture', 'SKILL.md')),
+    ).toBe(true);
   });
 
-  it('rejects an invalid skills target before creating the product', async () => {
+  it('rejects a non-agents skills target before creating the product', async () => {
     const root = await createTempDir('openissue-init-invalid-');
     cleanup.push(root);
     const result = await run(root, ['init', '--id', 'demo', '--skills', 'unknown-tool']);
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('未知的 skills 工具');
+    expect(result.stderr).toContain('openissue skills install --tool unknown-tool');
     expect(await exists(path.join(root.root, 'openissue', 'product.yaml'))).toBe(false);
   });
 });

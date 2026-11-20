@@ -64,57 +64,106 @@ openissue skills status
 openissue skills update
 ```
 
-`status` 只读显示 `缺失`、`已安装`、`待更新`、`已修改`、`未托管`。`update` 只更新未修改的托管副本；未指定 `--tool` 时只处理已检测到的目录。`init` 也可以一步安装：
+`status` 只读显示 `缺失`、`已安装`、`待更新`、`已修改`、`未托管`。`update` 只更新未修改的托管副本；未指定 `--tool` 时只处理已检测到的目录。
+
+`init` 默认把全部随包 skills 安装到 workspace 根 `.agents/skills`；`--skills none` 明确跳过；`--skills` 不带值等价于 `agents`。其他工具目录不会由 `init` 写入：
 
 ```bash
-openissue init --id demo --name "Demo 产品" --skills agents
-openissue init --id demo --name "Demo 产品" --skills none   # 明确跳过
+openissue init
+openissue init --skills none
+openissue skills install --tool claude,opencode
 ```
 
-未提供 `--skills` 时，`init` 只初始化产品并提示后续安装。skills 随 npm 包分发；`pnpm pack` 可用于检查打包内容。
+skills 随 npm 包分发；`pnpm pack` 可用于检查打包内容。
 
 ## 数据布局
 
+多仓 workspace 的根只保存共享入口，不保存需求数据：
+
 ```text
-<锚点仓库>/
-  openissue/
-    product.yaml            # 产品 id、名称、当前重点、成员列表
-    issues/
-      OI-YYYYMMDD-XXXX.md   # YAML frontmatter + Markdown 描述
-  openspec/                 # 可选的规范/提案区
+<workspace>/
+  .openissue-workspace.yaml # version、product、anchor；不保存成员或需求
+  .agents/skills/           # 根共享 skills
+  AGENTS.md                 # 带 OPENISSUE 标记的索引段落
+  <id>/                     # 代码仓
+    README.md
+    .gitignore
+    AGENTS.md
+    openissue-project.yaml
+  <id>-spec/                # spec/issue 锚点
+    README.md
+    AGENTS.md
+    openissue/
+      product.yaml          # 产品 id、名称、当前重点、成员列表
+      issues/
+        OI-YYYYMMDD-XXXX.md # YAML frontmatter + Markdown 描述
+    openspec/               # 标准 OpenSpec 结构（CLI 可用时）
 ```
 
-成员仓库：
+单 Git 仓原地初始化时，当前仓就是锚点，不创建 `.openissue-workspace.yaml`，也不创建 workspace 根 `AGENTS.md` 索引。
+
+成员仓库只保存指针：
 
 ```yaml
 products:
   - id: demo
-    anchor: ../demo-anchor
+    anchor: ../demo-spec
 ```
 
-本机注册表默认在 `~/.openissue/registry.yaml`；可用 `OPENISSUE_HOME` 覆盖。
+workspace 根命令（`list`、`start`、`board` 等）通过 `.openissue-workspace.yaml` 解析锚点；成员关系始终从锚点的 `openissue/product.yaml` 读取。本机注册表默认在 `~/.openissue/registry.yaml`；可用 `OPENISSUE_HOME` 覆盖。
 
 ## 快速开始
 
-### 1. 初始化锚点
+### 1. 初始化 workspace
 
-在产品的 spec/issue 仓库根目录：
+**既有 workspace**：在 workspace 根运行：
+
+```bash
+openissue init
+```
+
+系统只扫描直接子目录：已有 `openissue/product.yaml` 的仓库、或含完整 `openspec/specs` / `openspec/changes` 的规范仓会成为锚点候选；只有 `openspec/config.yaml` store 指针的代码仓会被排除。唯一候选自动复用；多个候选必须用 `--anchor <path>` 选择。确认后会写出轻量指针，并让用户选择成员仓库。
+
+**全新项目**：在空 workspace 运行：
+
+```bash
+openissue init --new --name "Demo Product"
+```
+
+项目名必须是英文；`Demo Product` 会规范化为 `demo-product`，并创建 `demo-product/` 代码仓与 `demo-product-spec/` spec 仓。两个仓库只执行 `git init`，不会自动提交，也不会生成技术栈脚手架。空 workspace 未提供 `--name` 时，交互式终端会提示输入英文项目名。
+
+**单 Git 仓**：在当前仓根运行：
 
 ```bash
 openissue init --id demo --name "Demo 产品"
 ```
 
-这会创建 `openissue/product.yaml` 与 `openissue/issues/`，并把锚点登记到本机注册表。
+当前仓原地成为锚点；如果在 Git 仓子目录运行，会提示到仓根或指定锚点，不会创建嵌套仓库。
+
+`init` 默认安装全部随包 skills 到 workspace 根 `.agents/skills`；`--skills none` 跳过。若锚点是单独的 spec 仓，OpenSpec 在 spec 仓生成的 `.agents/skills` 会合并到 workspace 根，并在成功校验后移除 spec 仓副本。
+
+缺少 OpenSpec 时会先询问；交互式终端可确认补初始化，脚本中使用 `--openspec` 或 `--no-openspec`。OpenSpec CLI 不可用或初始化失败时，OpenIssue 与仓库仍会保留，并报告未完成项。
+
+已有指针失效时，使用以下任一方式明确修复，不会静默改选：
+
+```bash
+openissue init --rescan
+openissue init --anchor <锚点路径>
+```
 
 ### 2. 登记成员仓库
 
-在每个成员代码仓库根目录：
+初始化既有 workspace 时会列出直接子 Git 仓：store 指针匹配锚点的仓预选，其他仓可选，已归属其他产品的仓标记冲突且默认不选。确认后成员仓库获得 `openissue-project.yaml`，锚点 `product.yaml` 记录成员。
+
+手动补登记仍可使用：
 
 ```bash
-openissue register --anchor ../demo-anchor
+openissue register --anchor ../demo-spec
 ```
 
-锚点的 `product.yaml` 会记录成员；成员仓库只得到 `openissue-project.yaml`。一个仓库登记到多个产品时，后续命令必须用 `--product <id>` 明确选择。
+手动登记会跳过 workspace 初始化中的锚点发现与成员确认；正常情况下优先从 workspace 根运行 `openissue init`。
+
+一个仓库登记到多个产品时，后续命令必须用 `--product <id>` 明确选择。
 
 ### 3. 捕获需求
 
@@ -290,8 +339,29 @@ OpenIssue 不会自动修复或丢弃无法解析的记录。
 **`当前目录不是 OpenIssue 锚点仓库`**  
 在锚点根目录运行 `openissue init`，或用 `--anchor <path>` 指向锚点。
 
+**`workspace 指针指向的锚点失效`**  
+指针指向的路径不存在或不再是有效锚点。运行 `openissue init --rescan` 重新扫描，或用 `openissue init --anchor <锚点路径>` 明确修复；OpenIssue 不会静默切换到另一个锚点。
+
+**`发现多个锚点候选`**  
+用 `--anchor <path>` 选择目标锚点。未选择前不会写入锚点或成员指针。
+
+**`当前 workspace 有普通内容`**  
+先确认是否应在此新建项目。明确要新建时使用 `openissue init --new --name "<英文项目名>"`；否则指定其他目录或取消。
+
+**`目标目录已存在`**  
+新项目的 `<id>/` 或 `<id>-spec/` 已存在。换一个项目名；如果是上次中断的初始化，确认目标内容后加 `--yes` 恢复，已有文件不会在未确认时被覆盖。
+
+**`当前目录位于 Git 仓内部`**  
+到 Git 仓根运行 `openissue init`，或用 `--anchor <path>` 指定锚点；不会在子目录创建嵌套仓库。
+
+**`Git 不可用` / `git init 失败`**  
+新项目文件会保留，但不会声称两个仓库已就绪。安装 Git 后在各仓库根运行 `git init`，然后按输出的下一步继续。
+
+**`OpenSpec CLI 不可用`**  
+代码仓、spec 仓与 OpenIssue 数据仍会创建。安装 OpenSpec 后在 spec 仓运行 `openspec init`；OpenIssue 不会把未初始化的 OpenSpec 标为就绪。
+
 **`当前仓库尚未归属任何产品`**  
-在成员仓库运行 `openissue register --anchor <锚点路径>`。
+在成员仓库运行 `openissue register --anchor <锚点路径>`；或从 workspace 根重新运行 `openissue init` 选择成员。
 
 **`当前仓库属于多个产品`**  
 用 `--product <id>` 选择当前产品；未选择前不会读取或写入任何产品的需求。
@@ -328,6 +398,23 @@ OpenIssue 不会自动修复或丢弃无法解析的记录。
 
 **中文标题无法生成变更标识**  
 OpenSpec 1.10 只接受小写字母、数字与连字符。OpenIssue 会回退到需求标识；可用 `--change <id>` 指定自定义标识。
+
+## 初始化失败与恢复
+
+初始化按阶段执行，并报告成功、失败与未执行项。任一步骤失败都不会自动回滚或删除已创建的仓库、OpenIssue 数据或 OpenSpec 数据；只有用户明确要求时才手动清理。
+
+- 已有有效 workspace 指针时再次运行 `openissue init` 会复用锚点，不重新扫描或改写指针。
+- 新项目中途失败后，用相同的 `--new --name "<名称>" --yes` 重试；已有效的目录、产品、成员与 skills 不会重复创建。
+- 失败项会给出重试命令。OpenSpec/Git 修复后可以只补对应步骤；不要为了重试删除仍包含需求数据的锚点。
+
+OpenSpec 变更归档顺序依赖：
+
+1. `establish-openissue-v1`
+2. `add-openissue-skills`
+3. `adopt-grill-me-entry`
+4. `add-workspace-init`
+
+依赖变更未归档前可以验证与实现，但不能归档当前变更；否则 `MODIFIED/REMOVED` 目标不存在。
 
 ## 设计边界
 

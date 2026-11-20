@@ -20,6 +20,7 @@ flowchart LR
   BOARD --> CTX
   CTX --> WS[storage/workspace.ts<br/>resolveWorkspace]
   WS --> REG[(~/.openissue/registry.yaml)]
+  WS --> WSPTR[(workspace<br/>.openissue-workspace.yaml)]
   WS --> PTR[(member<br/>openissue-project.yaml)]
   WS --> PRD[(anchor<br/>openissue/product.yaml)]
   CMD --> ST[storage/issue.ts<br/>load / mutate / write]
@@ -44,19 +45,28 @@ flowchart LR
 | Domain   | `src/domain/`   | Pure functions only (no I/O)                                                     |
 | Storage  | `src/storage/`  | Filesystem, YAML/frontmatter, atomic writes, workspace resolution; no CLI output |
 
-**Resolution order** (`src/storage/workspace.ts`): explicit `--anchor` → nearest ancestor with `openissue/product.yaml` → nearest ancestor with `openissue-project.yaml` (use registry `anchor_path`, then pointer-local `anchor`) → `unregistered`. Multiple resolvable products return `ambiguous` until `--product` is supplied. Never silently pick. `commands/context.ts` converts the typed context into `ActiveWorkspace` or throws the zh-CN guidance error.
+**Resolution order** (`src/storage/workspace.ts`): explicit `--anchor` → nearest ancestor with `openissue/product.yaml` → nearest ancestor with `openissue-project.yaml` (use registry `anchor_path`, then pointer-local `anchor`) → nearest `.openissue-workspace.yaml` → `unregistered`. A present but invalid workspace pointer throws with `--rescan`/`--anchor` repair guidance; it never silently falls through. Multiple resolvable products return `ambiguous` until `--product` is supplied. Never silently pick. `commands/context.ts` converts the typed context into `ActiveWorkspace` or throws the zh-CN guidance error.
 
 **Data layout**
 
 ```text
-<anchor>/                          # e.g. ../OpenIssue-spec-issue
-  openissue/product.yaml           # id, name, focus, focus_updated_at, members[]
-  openissue/issues/OI-YYYYMMDD-XXXX.md
-  openspec/                        # optional; specs/ + changes/
+<workspace>/
+  .openissue-workspace.yaml        # version, product, anchor only; no members/issues
+  .agents/skills/                  # shared OpenIssue + promoted OpenSpec skills
+  AGENTS.md                        # OPENISSUE managed index section
+  <id>/                            # code repo
+    README.md, .gitignore, AGENTS.md, openissue-project.yaml
+  <id>-spec/                       # anchor
+    README.md, AGENTS.md
+    openissue/product.yaml         # id, name, focus, focus_updated_at, members[]
+    openissue/issues/OI-YYYYMMDD-XXXX.md
+    openspec/                      # optional; specs/ + changes/
 <member>/
   openissue-project.yaml           # products: [{ id, anchor? }] — committed pointer
 $OPENISSUE_HOME/registry.yaml      # default ~/.openissue; products.<id>.anchor_path
 ```
+
+Single-repo init uses the current repo as anchor with no workspace pointer or root `AGENTS.md` index. `init` scans only direct children for `openissue/product.yaml` or complete OpenSpec data; a config-only `openspec/config.yaml` with `store:` is a pointer repo and is excluded.
 
 **Issue file**: YAML frontmatter + Markdown body. Fields: `id`, `title`, `status`, `product`, `created_at`, `updated_at`, `author`, `source`, optional `close {reason, note?, closed_at}`, `blocked_by[]`, `proposals[]`, `priority {tier, order, reason, basis, judged_at, input_hash, source, manual_tier, manual_at}`. Description is the body; a `description` frontmatter key is deleted on write. Unknown frontmatter keys are preserved via `rawFrontmatter` — do not drop them.
 
@@ -70,14 +80,14 @@ $OPENISSUE_HOME/registry.yaml      # default ~/.openissue; products.<id>.anchor_
 
 | Directory                           | Purpose                                                                                                                                                                                                      |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/commands/`                     | Command families: `register.ts` (init/register), `create.ts`, `edit.ts`, `list.ts` (list/show), `lifecycle.ts` (close/reopen), `dependencies.ts` (depend/undepend), `priority.ts`, `focus.ts`, `tier.ts`, `start.ts` (interview entry/discard), `handoff.ts` (link/confirm), `board.ts`, `skills.ts`, `context.ts` |
+| `src/commands/`                     | Command families: `init.ts` (workspace/single/new project entry), `register.ts` (manual member registration), `create.ts`, `edit.ts`, `list.ts` (list/show), `lifecycle.ts` (close/reopen), `dependencies.ts` (depend/undepend), `priority.ts`, `focus.ts`, `tier.ts`, `start.ts` (interview entry/discard), `handoff.ts` (link/confirm), `board.ts`, `skills.ts`, `context.ts` |
 | `src/board/`                        | `server.ts` HTTP routes/actions, `data.ts` shared board data, `render.ts` server-rendered HTML |
-| `src/services/`                     | `handoff.ts` OpenSpec metadata (`x-openissue-issues`, `x-openissue-interview`), interview entry context, resume/discard, archive detection, snapshot diff |
-| `src/skills/`                       | `catalog.ts` bundled asset loading + tool table; `manifest.ts` hash manifest; `install.ts` install/status/update |
+| `src/services/`                     | `workspace-init.ts` anchor/member discovery, pointer, new project scaffold, phases/retry; `handoff.ts` OpenSpec metadata (`x-openissue-issues`, `x-openissue-interview`), interview entry context, resume/discard, archive detection, snapshot diff |
+| `src/skills/`                       | `catalog.ts` bundled asset loading + tool table; `manifest.ts` hash manifest; `install.ts` install/status/update + OpenSpec `.agents/skills` promotion |
 | `skills/`                           | Five installable `SKILL.md` workflows; included in npm `files` |
 | `src/core/`                         | `types.ts` canonical schema; `errors.ts`; `id.ts` ID/slug generation; `paths.ts`; `hash.ts`; `author.ts`; `guards.ts`                                                                                        |
 | `src/domain/`                       | Pure rules: `dependencies.ts`, `priority.ts`, `assistant.ts`, `search.ts`, `lifecycle.ts`, `manual.ts`                                                                                                       |
-| `src/storage/`                      | `issue.ts`, `product.ts`, `registry.ts`, `workspace.ts`, `frontmatter.ts`, `atomic.ts`, `facts.ts`                                                                                                           |
+| `src/storage/`                      | `issue.ts`, `product.ts`, `registry.ts`, `workspace.ts` (member + workspace pointers), `openspec.ts` (OpenSpec data/store detection), `frontmatter.ts`, `atomic.ts`, `facts.ts`                                      |
 | `src/types/`                        | Ambient declaration for `write-file-atomic`                                                                                                                                                                  |
 | `test/helpers/`                     | Temp-repo fixtures and `runCli` harness                                                                                                                                                                      |
 | `test/unit/`, `test/integration/`   | Vitest suites                                                                                                                                                                                                |
@@ -124,7 +134,11 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 | `src/cli.ts`                                                       | Entry point, `createProgram()`, global `--anchor`/`--product`, command registration, error → exit code; version comes from `src/core/version.ts` |
 | `src/core/version.ts`                                              | Single `VERSION` source; must match `package.json`                                                                      |
 | `src/commands/context.ts`                                          | `activeWorkspace()`; canonical zh-CN errors for unregistered/ambiguous/missing states                                   |
-| `src/storage/workspace.ts`                                         | Anchor/member/registry resolution; `MEMBER_FILE = 'openissue-project.yaml'`; legacy pointer migration                   |
+| `src/storage/workspace.ts`                                         | Anchor/member/registry resolution; `MEMBER_FILE = 'openissue-project.yaml'`; `WORKSPACE_FILE = '.openissue-workspace.yaml'`; legacy pointer migration |
+| `src/storage/openspec.ts`                                          | Complete OpenSpec data vs store-pointer detection; `openspec init` invocation |
+| `src/commands/init.ts`                                             | Workspace/single/new-project init flags and report output |
+| `src/services/workspace-init.ts`                                   | Anchor/member scanning, confirmations, pointer writes, scaffold, AGENTS index, phase reporting |
+| `test/integration/workspace-init.test.ts`                          | Root pointer, discovery, members, scaffold, skills/AGENTS, failure/retry coverage |
 | `src/storage/issue.ts`                                             | Schema parsing, conflict collection, atomic mutation, `publicIssue()`                                                   |
 | `src/storage/product.ts`                                           | `openissue/product.yaml` read/write; `initProduct`, `addMember`                                                         |
 | `src/storage/registry.ts`                                          | `$OPENISSUE_HOME/registry.yaml`; machine-local anchor paths                                                             |
@@ -157,8 +171,8 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 
 ## Testing & QA
 
-- **Runner**: Vitest, `test/**/*.test.ts`, `test/e2e/**` excluded, 20s test/hook timeout. Current suite: 15 files / 88 tests, ~23s. No coverage thresholds.
-- **Layers**: `test/unit/paths.test.ts` (pure helpers), `test/fixtures.test.ts` (fixture smoke, invokes real `openspec`), `test/smoke.test.ts` (CLI version), `test/integration/{capture,edit,workspace,lifecycle,dependencies,priority,assistant,handoff,grill-entry,board,search,skills}.test.ts` (real CLI/board + temp dirs), `test/e2e/board.spec.ts` (Playwright).
+- **Runner**: Vitest, `test/**/*.test.ts`, `test/e2e/**` excluded, 20s test/hook timeout. Current suite: 16 files / 118 tests. No coverage thresholds.
+- **Layers**: `test/unit/paths.test.ts` (pure helpers), `test/fixtures.test.ts` (fixture smoke, invokes real `openspec`), `test/smoke.test.ts` (CLI version), `test/integration/{capture,edit,workspace,workspace-init,lifecycle,dependencies,priority,assistant,handoff,grill-entry,board,search,skills}.test.ts` (real CLI/board + temp dirs), `test/e2e/board.spec.ts` (Playwright).
 - **Integration harness**: `runCli(args, { cwd, env })` spawns `node node_modules/tsx/dist/cli.mjs src/cli.ts …`; **no build required**. Always isolate with `OPENISSUE_HOME=<temp>/.home` and `OPENISSUE_AUTHOR=测试作者`. Track temp dirs and clean them in `afterEach` via `Promise.all(cleanup.splice(0).map(x => x.cleanup()))`.
 - **Assertions are behavioral**: exit status, zh-CN stderr substrings, on-disk YAML/body, and `--json` stdout. Tests deliberately assert raw file equality when a command must not mutate data. Prefer these over mocking internals.
 - **Cross-platform expectations**: every path-related change must work on Windows and POSIX; specs additionally require a POSIX-separator fixture (already covered by `workspace.test.ts`).
@@ -168,7 +182,7 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 
 ## Implementation Status
 
-All 71 tasks are complete; `openspec list` reports `establish-openissue-v1 ✓ Complete`, and both strict validations pass. `add-openissue-skills` is also 4/4 artifacts complete and validated; it adds the bundled Agent skills installer.
+`establish-openissue-v1`, `add-openissue-skills`, and `adopt-grill-me-entry` are archived. `add-workspace-init` has all 28 tasks complete and is validated; archive remains a separate step after the dependency order is confirmed.
 
 Implemented:
 
@@ -178,7 +192,8 @@ Implemented:
 - OpenSpec interview entry and handoff: `start`, active-proposal takeover, `x-openissue-interview` incomplete state, resume/discard, `--link` association, snapshot diff, archive detection, and explicit completion confirmation.
 - OpenSpec facts (specs, active/archived proposals, task progress), input-hash cache/staleness, and manual/rule precedence.
 - Cross-platform CI workflow, Playwright suite, and full-product end-to-end script.
-- Five installable Agent skills (`openissue-onboard/capture/triage/grill-me/handoff`) with `openissue skills list|install|status|update`, hash manifest conflict protection, and `init --skills` support.
+- Five installable Agent skills (`openissue-onboard/capture/triage/grill-me/handoff`) with `openissue skills list|install|status|update`, hash manifest conflict protection, and default `init` installation to `.agents/skills`.
+- `openissue init` workspace discovery: lightweight `.openissue-workspace.yaml` pointer, OpenIssue/complete-OpenSpec anchor candidates, store-pointer exclusion, member preselection/conflicts, single-repo in-place init, new-project `<id>/` + `<id>-spec/` scaffold, OpenSpec agents promotion, managed root `AGENTS.md` index, and phase-aware failure/retry reporting.
 - `openissue start` interview entry with active-proposal takeover, incomplete-interview resume/discard, Board copyable context, and `handoff --link` as the only manual association path.
 
 Known gaps / external conditions:

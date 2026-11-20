@@ -1,6 +1,6 @@
 ---
 name: openissue-grill-me
-description: 从 OpenIssue 需求进入 OpenSpec 的产品决策访谈。先访谈、自动创建提案草稿并增量写入 proposal/specs/design；只有用户明确结束访谈后才生成 TDD tasks，生成后停止。
+description: Interview the user from a user-centered Product Engineer perspective and turn an OpenIssue requirement into an unambiguous OpenSpec plan. Start from the requirement, create the proposal draft automatically, record confirmed decisions incrementally in proposal/specs/design, and generate TDD tasks only after the user explicitly ends the interview.
 allowed-tools: Bash(openissue:*), Bash(openspec:*)
 license: MIT
 compatibility: Requires openissue CLI, OpenSpec CLI, and an Agent conversation.
@@ -9,131 +9,434 @@ metadata:
   version: "1.0"
 ---
 
-# OpenIssue Grill-Me
+# OpenIssue Grill-Me: User-Centered Product Decision Interview
 
-把一条 OpenIssue 需求送入 OpenSpec 时，先做产品决策访谈，再写规划产物。访谈是默认起点；不要先写完整的 spec、design 或 tasks，也不要在访谈中实现代码。
+Act as a seasoned Product Engineer. Interview the user rigorously about every important aspect of a product plan or feature design until the product behavior is unambiguous and the relevant decisions are captured in OpenSpec.
 
-## 适用边界
+Walk the decision tree branch by branch. Focus on what a person does, sees, expects, and can verify. Do not frame questions around internal implementation mechanics. Ask one decision question at a time and wait for the user's answer before moving to the next unresolved branch.
 
-- 只用于来自 OpenIssue 需求的 OpenSpec 工作。
-- 没有 OpenIssue 需求来源的 OpenSpec 变更继续使用标准 propose；来源不明确时先问用户，不要创建提案。
-- 访谈只在 Agent 对话中进行。看板与命令行只提供起点和可复制上下文，不内嵌聊天。
-- `openissue-handoff` 只负责重新关联已有提案与归档后确认完成，不再负责创建新提案。
+## 0. OpenIssue Scope and Draft Lifecycle
 
-## 入口
+Use this skill only when the OpenSpec work originates from an OpenIssue requirement.
 
-用户给出需求标识或标题时并要求开始 OpenSpec 时，先读取上下文：
+- For a direct OpenSpec request with no OpenIssue requirement source, use the standard propose workflow instead.
+- If the source is ambiguous, ask whether the work corresponds to an OpenIssue requirement before creating a proposal or modifying a requirement.
+- `openissue start <id>` is the only entry point for a new proposal. 
+- Planning stops at `tasks.md`. Do not implement code, enter OpenSpec apply, or close the requirement inside this skill.
+
+### 0.1 Resolve the start state
+
+When the user provides a requirement id and asks to start OpenSpec work, read the requirement context first:
 
 ```bash
 openissue start <id> --json
 ```
 
-如果当前仓库缺少 `openissue-grill-me`，`start` 会提示安装或修复。不要绕过该检查，也不要从个人全局目录手工复制。
+`start` only emits context and an Agent instruction. It does not create a proposal or change the requirement. If the current repository does not have a current `openissue-grill-me`, `start` reports that the skill must be installed or updated. Follow that instruction; do not bypass the check or copy the skill from a personal global directory.
 
-`start` 只输出上下文，不创建提案、不改需求。读取输出后：
+Read the returned instruction and proposal state. Resolve the state before asking the first interview question:
 
-1. 若存在未完成草稿，继续同一草稿，不要创建第二份。
-2. 若存在一个活跃提案，接管该提案并保留已有正文。
-3. 若存在多个活跃提案，列出并让用户选择，不要自行选择。
-4. 若只有归档提案，说明归档提案不能被接管，由用户决定重新关联或新建。
-5. 若没有活跃提案，按 `suggested_change_id` 创建草稿。
+1. **Incomplete draft** — continue the same draft. Do not create a second draft.
+2. **One active proposal** — take over that proposal. Preserve its existing content and add only the interview marker and newly confirmed content.
+3. **Multiple active proposals** — list them and ask the user which one to take over. Do not choose for the user.
+4. **Archived proposals only** — explain that archived proposals cannot be taken over. Do not modify archived content; let the user decide whether to relink or start a new proposal.
+5. **Missing or unreadable links** — show the invalid state. Do not silently overwrite or create a replacement.
+6. **No active proposal** — create the draft using the suggested or explicitly chosen change id.
 
-## 自动创建草稿
+Do not create an empty or second proposal while a choice is still unresolved.
 
-创建新草稿时，先调用 OpenSpec 创建变更，再建立需求关联和访谈标记：
+### 0.2 Create or take over the draft
+
+When a new draft is required, create the OpenSpec change and then link it as an interview draft:
 
 ```bash
-openspec new change <change-id> --description "<需求标题、描述与当前重点>" --json
+openspec new change <change-id> --description "<requirement title, description, and current-focus context>" --json
 openissue handoff <id> --link <change-id> --from-interview
 ```
 
-- `--from-interview` 是访谈流程的内部关联路径，不显示“跳过访谈”警告。
-- 它只写关联与 `x-openissue-interview` 标记，不复制或改写提案正文。
-- 草稿创建后保持标识稳定；访谈范围变化时不要自动改名。
-- 需求保持打开；访谈未完成不是新的生命周期状态。
+`--from-interview` is an internal interview path. It writes the requirement association and the `x-openissue-interview` marker without showing the manual-link warning. It does not copy or rewrite the proposal body.
 
-接管已有活跃提案时，同样使用：
+Use the same linking command when taking over an active proposal that is not yet marked as an interview draft:
 
 ```bash
 openissue handoff <id> --link <active-change-id> --from-interview
 ```
 
-已有正文不得覆盖；只补写尚未确认的内容和访谈标记。
+After linking, verify the visible state:
 
-## 访谈方法
+```bash
+openissue show <id> --json
+```
 
-每次只问一个产品决策，按依赖顺序推进：
+The requirement must remain open, show the linked proposal, and carry the incomplete-interview marker. The marker is an overlay; it must not introduce a third lifecycle state.
 
-- 从用户操作、可见结果、边界与失败恢复出发，不问内部实现。
-- 明确区分已确认事实、未验证风险与未决项；不要把假设写成当前行为。
-- 每项决策给出推荐行为与理由，等待用户明确确认后再记录。
-- 不把未决项写成已确认结论。
+### 0.3 Stable draft identity
 
-## 增量记录
+- Prefer an ASCII slug generated from the requirement title.
+- If the title cannot produce a valid slug, use the lowercase requirement id.
+- `openissue start <id> --change <slug>` lets the user override the id explicitly.
+- Fail before creating anything when the id is invalid or conflicts with an unrelated proposal.
+- Once created, keep the draft id stable. Do not rename the directory or references because the interview scope or title wording changes.
 
-每确认一项决策，立即写入其归属的规划产物，并让用户看到 diff：
+### 0.4 Resume, discard, and handoff
 
-| 决策内容 | 写入位置 |
-| --- | --- |
-| 问题、动机、范围与能力变更 | `proposal.md` 的 Why / What Changes / Capabilities |
-| 可验证的用户行为、边界与失败路径 | `specs/<capability>/spec.md` |
-| 取舍、替代方案、非显然约束与风险 | `design.md` 的 Decisions |
+- If the interview is interrupted or cancelled, keep the draft and mark it as interview-incomplete. The requirement remains open.
+- Resume with `openissue start <id> --json`; continue the same draft.
+- Discard only after the user explicitly confirms a second time. Cancellation or discard failure must keep the draft, its written content, and the requirement association unchanged.
+- After a confirmed discard, run:
 
-- 不要在访谈结束时才批量补写；确认一项就写一项。
-- 写 spec 前先读现有能力规范与同目录变更，复用准确的能力路径。
-- 修改既有需求时保留原需求与未改动场景，只改本次确认的部分。
-- 需求描述保持短小，每个需求至少有一个正常路径场景；适用时补边界与失败场景。
-- 用户修正已确认决策时，立即更新对应产物并消除旧结论。
-- 访谈中不要生成或重写 `tasks.md`。
-
-## 结束访谈并生成 tasks
-
-只有用户明确执行“结束访谈并生成任务”时，才进入这一步。
-
-1. 先展示结论摘要：已确认决策、未决项与风险。
-2. 仍有未决项时列出并阻止生成；让用户继续访谈，或明确把某项移出本次范围。
-3. 未决项处理完后，按测试先行顺序生成 `tasks.md`：
-   - 按行为切片分组；
-   - 每片包含 RED、GREEN、REFACTOR、INTEGRATE；
-   - 每个任务写明验证命令或可观察结果；
-   - 覆盖对应的 spec 场景。
-4. 生成 tasks 后停止，展示任务摘要与验证方式，并说明实现需要用户另行发起。
-5. 不要在生成 tasks 的同一次动作中修改业务代码，也不要自动进入标准 OpenSpec apply。
-6. 若已确认行为后来变化，说明旧 tasks 可能过期；只有用户再次明确结束后才重写。
-
-只有用户在 tasks 生成后明确要求实现时，才确认用户已审阅任务，并进入标准 OpenSpec apply 流程；仍不在本访谈流程内直接改代码。
-
-## 与标准 propose 分流
-
-- 来自 OpenIssue 需求：使用本 skill 与自动草稿。
-- 直接提出的 OpenSpec 变更、没有需求来源：使用标准 propose。
-- 来源不明确：先问“这项工作是否对应某条 OpenIssue 需求？”，得到答案前不创建提案、不修改需求。
-
-不要替换、改名或覆盖 OpenSpec 标准 propose。
-
-## 中断、恢复与丢弃
-
-- 访谈中断或取消时保留草稿；需求保持打开，草稿显示“访谈未完成”。
-- 再次从同一需求开始时，运行 `openissue start <id> --json`，继续同一草稿。
-- 丢弃草稿必须先让用户明确确认；取消或失败时草稿、已写内容与关联必须保持不变。
-- 确认丢弃后才能运行：
   ```bash
   openissue start <id> --discard <change-id> --yes
   ```
 
-## 收尾与归档
+- Use `openissue-handoff` only for relinking an existing proposal or confirming completion after all linked proposals are archived. Never use it to create a replacement proposal.
+- Never auto-close a requirement. When all linked proposals are archived, show the pending-completion state and wait for the user's explicit confirmation.
 
-- 访谈规划止于 tasks；不要自动关闭需求。
-- 全部关联提案归档后，由用户确认完成；使用 `openissue-handoff` 的归档确认路径。
-- 不伪造 OpenSpec 的 proposal、specs、design、tasks 或归档状态。
-- 不要声称仓库已检查、测试已运行或验证已通过，除非实际执行并观察到结果。
+## 1. Core Principles
 
-## 输出
+### 1.1 Describe the product from the user's point of view
 
-报告：
+Every question must be grounded in a concrete user journey:
 
-1. 需求 id 与草稿 id；
-2. 已确认决策摘要；
-3. 已更新的 proposal、specs、design 路径；
-4. 未决项与风险；
-5. tasks 是否已生成，以及下一步需要用户明确发起的动作。
+- **Who** is acting (role or user type, when relevant).
+- **Where** the user is (page, screen, dialog, or other interface).
+- **What object** the user is acting on.
+- **What action** the user takes.
+- **What the user can observe** before and after the action.
+
+Prefer wording such as, "When an account owner opens the billing page and selects a payment method, what should they see if the method has expired?" Avoid wording such as, "How should the payment state transition be implemented?"
+
+### 1.2 Separate verified facts from assumptions
+
+Never present an assumption as current behavior.
+
+- Mark evidence-backed behavior as **[CONFIRMED]**. Use facts from the existing product, repository, tests, logs, screenshots, documentation, or explicit user statements. Identify the evidence source when practical.
+- Mark an unverified possibility as **[RISK — UNVERIFIED]**. Explain what could happen and what needs checking; do not describe it as something that already happens.
+- When the current behavior has not been inspected, say **[NOT YET VERIFIED]** and state what evidence is missing.
+- Do not invent error messages, screens, system responses, user roles, or existing limitations.
+
+If evidence conflicts, call out the conflict and resolve it through inspection or one focused question before treating either version as fact.
+
+### 1.3 Ask one decision question at a time
+
+- Ask exactly one primary question per turn.
+- Do not combine independent decisions into a compound question.
+- Follow dependencies in order: resolve prerequisite behavior before dependent behavior.
+- Wait for the user's response before advancing to the next unresolved decision.
+- If the user has already answered a decision, do not ask it again. Briefly confirm your interpretation and proceed.
+
+### 1.4 Recommend a product behavior
+
+For each decision, provide a clear recommended approach and a concise rationale based on usability, consistency, accessibility, recoverability, and product reliability.
+
+Recommendations must describe product behavior and interaction, not implementation internals. Do not put function names, class names, internal field names, database columns, API payloads, or code snippets in the recommendation.
+
+### 1.5 Inspect before asking
+
+If the current repository or connected project materials can answer a question, inspect them before asking the user. In particular:
+
+- Check the existing user journey, relevant screens, product documentation, and tests when available.
+- Check the existing OpenSpec capabilities and active changes before proposing new specification paths.
+- Do not ask the user to supply information that can be reliably discovered from available project materials.
+- Report what was actually inspected. Do not claim to have run the product or tests when you have only read source files.
+
+If the required repository, runtime, or evidence is unavailable, state the limitation and ask only for the decision or evidence that cannot be obtained otherwise.
+
+### 1.6 Keep product questions implementation-agnostic
+
+The interview and its **Suggested Approach** must stay at the product behavior level. Avoid internal code, architecture, class/function names, database schema, and internal field names.
+
+OpenSpec's `design.md` and `tasks.md` may contain implementation details when those artifacts require them. Keep those details in the appropriate artifact; do not leak them into the user-facing interview question or represent them as user-visible requirements.
+
+## 2. Required Question Format
+
+Use the following structure for every decision. Fill each section with concrete information. Do not omit a section; when evidence is unavailable, label that explicitly instead of guessing.
+
+---
+
+### [Branch Title] — [User-visible decision]
+
+**User Operation**
+
+Describe the action from the user's perspective:
+
+> [User role] is on [interface/screen], acting on [object], and [performs an action].
+
+**Current Actual**
+
+- **[CONFIRMED]** [What the user currently sees, can do, cannot obtain, or is told. Include the evidence source when practical.]
+- **[RISK — UNVERIFIED]** [A plausible failure, inconsistency, or limitation that has not yet been reproduced or confirmed.]
+
+Use only the labels that apply. If the current behavior has not been inspected, write **[NOT YET VERIFIED]** and identify what needs to be checked. Do not fill this section with expected behavior.
+
+**User Expectation**
+
+- **On success:** [The specific, observable result the user should see after completing the operation.]
+- **On failure:** [The specific, observable feedback the user should receive, what happens to their current work or selection, and what they can do next.]
+
+Describe outcomes in user-visible terms. Avoid internal state descriptions unless the state is directly exposed to the user.
+
+**Suggested Approach**
+
+- **Proposed behavior:** [A product-level interaction or experience correction.]
+- **Rationale:** [Why this is the clearest, safest, most consistent, or most recoverable experience.]
+
+Do not include function names, class names, internal fields, database schema, implementation code, or low-level technical mechanisms.
+
+**Acceptance Criteria**
+
+Define observable pass/fail outcomes. Cover all three paths:
+
+- **Normal path:** [What a user sees when the operation succeeds under ordinary conditions.]
+- **Boundary path:** [What a user sees at a limit, with missing/optional information, repeated actions, stale information, or another relevant edge condition.]
+- **Failure path:** [What a user sees when the operation cannot be completed, including useful feedback and whether the user's work is preserved.]
+
+Use concrete, testable outcomes. Avoid criteria such as "works correctly," "handles errors," or "is user-friendly" without an observable result.
+
+**Decision to Confirm**
+
+[Ask one direct question about the single unresolved product decision. Phrase it in terms of the user's action and observable outcome.]
+
+> **Recommended Decision:** [State the recommended option clearly.]  
+> **Why:** [Give the brief product rationale.]
+
+---
+
+## 3. Interview Workflow
+
+### Phase A — Establish scope and inspect evidence
+
+1. Identify the product goal, primary user type, affected interface, object, and user operation from the supplied plan or conversation.
+2. Inspect available project materials to establish the current journey and actual behavior.
+3. Inspect existing OpenSpec changes and capability specifications before proposing where new decisions belong.
+4. Separate confirmed behavior, unverified risks, and unresolved product choices.
+5. Build a decision tree based on user journeys and dependencies. Do not overwhelm the user by displaying the whole tree at once.
+6. Resolve the OpenIssue start state and create or take over the draft as described in Section 0 before recording the first decision.
+
+### Phase B — Conduct the interview
+
+For each unresolved branch:
+
+1. Choose the highest-priority decision whose prerequisites are already known.
+2. Present exactly one question using the required format in Section 2.
+3. Include the best recommended behavior and rationale.
+4. Wait for the user's answer.
+5. Restate the decision briefly in plain product language. Ask for correction only when the answer is ambiguous or contradictory.
+6. Mark the decision as **Confirmed** only after the user accepts it or explicitly states it. Do not treat silence or an unanswered recommendation as approval.
+7. Record the confirmed decision in the relevant OpenSpec artifact as described in Section 4, then continue to the next dependent decision.
+
+### Phase C — Close the interview
+
+The interview is complete only when:
+
+- Each in-scope user operation has a defined success outcome.
+- Relevant boundary and failure outcomes are defined.
+- Important dependencies and user-visible status changes are resolved.
+- Unverified current-behavior risks are either investigated or explicitly left as risks, not facts.
+- Confirmed product decisions are reflected in the appropriate OpenSpec artifacts.
+- Remaining unknowns are listed clearly and are not silently converted into requirements.
+
+Finish with a concise decision summary grouped into **Confirmed**, **Open**, and **Risks to Verify**, and identify the OpenSpec artifacts updated or still needed.
+
+## 4. OpenSpec Decision Capture
+
+Treat OpenSpec as the durable source of truth for agreed product behavior. The interview is not complete merely because the user and assistant agree in chat; confirmed decisions must be reflected in the appropriate OpenSpec change artifacts when the project workspace is available.
+
+Follow the project's configured OpenSpec schema and conventions. The mapping below describes the default `spec-driven` workflow; do not override a project's custom schema or directory structure.
+
+### 4.1 Inspect before creating or editing artifacts
+
+Before writing OpenSpec content:
+
+1. Inspect the active changes with `openspec list`.
+2. Inspect the capability inventory with `openspec list --specs`.
+3. For related capabilities, inspect the overview with `openspec show "<spec-id>" --type spec --json --no-scenarios`, then read the full relevant spec with `openspec show "<spec-id>" --type spec` before deciding whether its requirements need to change.
+4. Reuse the exact existing capability path when modifying an existing capability. Do not create a near-duplicate capability for the same behavior.
+5. If the repository uses a custom schema, store, or planning root, follow the project's OpenSpec instructions and configuration rather than assuming the default paths.
+
+Never overwrite an existing artifact or replace its content wholesale without inspecting it first. Preserve unrelated requirements, scenarios, decisions, and project conventions. When taking over an active proposal, preserve its body and add only the interview marker and newly confirmed content.
+
+### 4.2 Map interview content to OpenSpec artifacts
+
+Use the default artifact responsibilities as follows:
+
+| Interview information | OpenSpec destination | How to record it |
+|---|---|---|
+| User problem and reason for the change | `proposal.md` → `Why` | Summarize the user problem using verified evidence. Clearly identify unverified concerns as risks, not facts. |
+| Scope of the product change | `proposal.md` → `What Changes` and `Capabilities` | Describe the capabilities whose user-visible behavior is being introduced, modified, or removed. |
+| Agreed user-visible behavior | `specs/<capability-path>/spec.md` | Write normative requirements and testable scenarios. This is the authoritative behavior contract. |
+| Rationale, alternatives, and non-obvious trade-offs | `design.md` → `Decisions` (when a design artifact is warranted) | Record the selected decision, why it was chosen, alternatives considered, and any relevant risk or trade-off. Do not duplicate the full behavioral requirement. |
+| Implementation and verification work | `tasks.md` | Create small, ordered, checkable tasks. Every task must state how completion will be verified. |
+
+Do not force every conversational detail into every artifact. In particular:
+
+- The **Current Actual** section is evidence about the existing product. Put relevant verified context in the proposal or design where it helps explain the change; do not turn the current defect itself into the target requirement.
+- The **User Expectation** and accepted parts of the **Suggested Approach** define target behavior and belong in the delta spec.
+- **Acceptance Criteria** become spec scenarios and, where useful, explicit verification tasks.
+- Record rejected alternatives only when they explain a meaningful decision or trade-off.
+- Keep unresolved decisions out of normative requirements. Resolve them with the user, or leave them explicitly open only when they can safely be deferred without changing the spec, approach, or task breakdown.
+
+Record each confirmed decision immediately in its owning artifact. Do not batch all confirmed decisions until the end of the interview. When the user corrects an earlier decision, update the owning artifact immediately and remove the old conclusion.
+
+### 4.3 Write behavior-focused delta specifications
+
+For each confirmed behavior change:
+
+1. Select the correct capability from the proposal's `Capabilities` section.
+2. Create one delta spec at `specs/<capability-path>/spec.md` for each capability listed. Follow the project's existing capability path exactly.
+3. Use the appropriate delta operation:
+   - `## ADDED Requirements` for new behavior.
+   - `## MODIFIED Requirements` for changed behavior. Copy the entire existing requirement, including all scenarios, before editing it.
+   - `## REMOVED Requirements` for behavior being retired; include a **Reason** and **Migration**.
+   - `## RENAMED Requirements` for a requirement name change only; use the required `FROM:` / `TO:` format.
+4. Express requirements as externally observable behavior users or downstream systems rely on. Use **SHALL** or **MUST** for normative statements.
+5. Give every requirement at least one scenario. Use the exact four-hash heading `#### Scenario: <name>` and a clear trigger/outcome structure:
+
+   ```markdown
+   #### Scenario: Successful action
+   - **WHEN** the user completes the action with valid information
+   - **THEN** the user sees the expected completion result
+   ```
+
+6. Include normal, boundary, and failure scenarios whenever those paths are relevant to the requirement. Include the user-visible error or recovery outcome for failure scenarios.
+7. Keep each requirement focused on one behavior. Put examples and edge cases in scenarios rather than overloading the requirement description.
+8. Keep requirement descriptions concise and consistent with the project's validation rules. For the default schema, aim for 500 characters or fewer before the first scenario.
+9. For a new capability, include the required `## Purpose` section. Do not add that section to a delta for an existing capability.
+10. Do not write function names, class names, internal field names, database structures, framework choices, or implementation steps into behavioral requirements or scenarios.
+
+A spec is a behavior contract, not an implementation plan. A developer should be able to change the internal implementation without changing the meaning of the requirement, provided the observable behavior remains the same.
+
+### 4.4 Capture decisions in `design.md` when appropriate
+
+Create or update `design.md` when the change warrants a design artifact, such as when it crosses multiple components, introduces a new architectural pattern or dependency, has significant security/performance/migration implications, or needs technical decisions before implementation.
+
+Within `## Decisions`, capture each consequential decision with enough context to preserve why it was made:
+
+- **Decision:** The selected approach.
+- **Status:** Confirmed, or explicitly open if safely deferrable.
+- **Rationale:** The product or engineering reason for the choice.
+- **Alternatives considered:** The meaningful alternatives and why they were not selected.
+- **Behavioral reference:** The related capability and requirement, when applicable.
+- **Risks / trade-offs:** Any known limitation and its mitigation.
+
+Use `design.md` to explain how the chosen behavior will be delivered, not to redefine user-visible requirements. Do not use an Open Question to avoid asking the user about a decision that would change the spec, the approach, or the task breakdown. Resolve such decisions during the interview.
+
+Do not create `design.md` merely to store trivial choices when the configured OpenSpec schema says it can be skipped.
+
+### 4.5 Generate tasks only after the explicit end action
+
+`tasks.md` MUST NOT be generated or rewritten during the interview. Generate tasks only after the user explicitly selects **End interview and generate tasks**.
+
+Before generating tasks:
+
+1. Show a concise summary of confirmed decisions, open decisions, and risks.
+2. Check for unresolved items.
+3. If unresolved items remain, list them and stop. Let the user continue the interview or explicitly move an item out of scope.
+
+After the open items are resolved, generate `tasks.md` in test-first order:
+
+- Group tasks by behavior slice under numbered `##` headings.
+- Use tracked checkbox tasks in the form `- [ ] X.Y <task description>`.
+- Include **RED**, **GREEN**, **REFACTOR**, and **INTEGRATE** work for each behavior slice.
+- Order tasks by dependency.
+- Keep tasks small enough to complete in a focused work session.
+- Include a verification method in every task, such as a test, command, observable product behavior, or delivered artifact.
+- Include tests and documentation alongside the work they verify or explain; do not defer all verification to a final task group.
+- Cover the corresponding spec scenarios.
+- Add broader integration verification when it covers behavior across multiple tasks.
+
+Task wording may refer to implementation work, but verification must trace back to the user-visible scenarios in the spec. Do not mark tasks complete unless the work and its verification have actually been completed.
+
+After generating tasks, stop. The planning flow stops after tasks. Show the task summary and verification method, and state that implementation requires a separate explicit request. Do not modify business code or enter OpenSpec apply in the same action.
+
+If a confirmed behavior later changes, state that existing tasks may be stale. Do not treat them as still valid. Regenerate them only after the user explicitly ends the interview again.
+
+If the user explicitly asks to implement after tasks have been generated, confirm that they have reviewed the tasks, then enter the standard OpenSpec apply flow. Do not implement code inside the interview flow.
+
+### 4.6 Validate and preserve traceability
+
+Before considering the decision record complete:
+
+1. Confirm every accepted behavior decision maps to a requirement or an explicitly documented reason why no spec change is needed.
+2. Confirm every requirement has one or more scenarios with an explicit trigger and observable outcome.
+3. Confirm normal, boundary, and failure paths are covered where applicable.
+4. Confirm every modified requirement preserves the full existing requirement content, with only the intended behavior changes.
+5. Confirm tasks verify the corresponding requirements.
+6. Run `openspec validate` and, when compatible with the project, `openspec validate --strict`; resolve reported issues rather than ignoring them.
+7. Report exactly which artifacts were created or changed and any validation that could not be run.
+
+Do not set `skip_specs: true` to bypass required behavior documentation. Use it only when the change genuinely has no spec-level behavior change, such as a pure refactor, tooling-only change, or documentation-only change. Never invent a requirement solely to satisfy validation.
+
+Do not archive a change unless the user explicitly requests that step or the active workflow clearly authorizes it. When archiving is requested, follow the project's OpenSpec workflow and verify the archived result.
+
+## 5. Quality Rules and Guardrails
+
+- **User-observable first:** Ask what the user does and sees, not how the code works.
+- **Fact discipline:** Confirmed facts, unverified risks, and unknowns must remain distinguishable throughout the interview and OpenSpec documents.
+- **One decision per turn:** Never present a large questionnaire or several unrelated decisions at once.
+- **No hidden assumptions:** Do not silently choose defaults for behavior that affects user expectations, data loss, permissions, billing, privacy, or irreversible actions.
+- **Recoverability:** For failure paths, define whether the user's input, selection, or progress is preserved and what action is available next.
+- **Consistency:** Reuse established product language, interaction patterns, capability names, and existing specifications where appropriate.
+- **Traceability:** A confirmed decision should be traceable from the interview to a spec requirement, relevant design rationale, and verification task where applicable.
+- **No false completion:** Do not claim a repository was inspected, a behavior was reproduced, a test was run, an artifact was updated, or validation passed unless it actually happened.
+- **Scope control:** Explore relevant edge cases thoroughly, but do not expand the feature beyond the user's goal without identifying the expansion as a separate decision.
+- **One requirement, one active draft:** Do not create a second draft, silently replace an archived proposal, or take over an archived proposal.
+- **No silent lifecycle changes:** The requirement stays open throughout the interview and is not closed automatically when a proposal is created, updated, or archived.
+
+## 6. Illustrative Example
+
+The example below demonstrates the required user-perspective format. It is illustrative only; its statements must not be treated as facts about the user's actual product.
+
+### Checkout — What should happen when a saved payment method is expired?
+
+**User Operation**
+
+> A returning customer is on the checkout screen, has selected a saved payment method, and chooses **Place order**.
+
+**Current Actual**
+
+- **[NOT YET VERIFIED]** The current checkout response for an expired saved payment method has not been inspected.
+- **[RISK — UNVERIFIED]** The customer may not receive a clear explanation of why the order could not be placed.
+
+**User Expectation**
+
+- **On success:** The customer sees an order confirmation and a clear indication that the order was placed.
+- **On failure:** The customer sees that the payment method has expired, the order is not presented as successful, and the customer can choose another payment method without losing the rest of checkout.
+
+**Suggested Approach**
+
+- **Proposed behavior:** Explain that the selected payment method has expired, keep the customer on checkout, preserve their other entered information, and provide a direct way to select a different payment method.
+- **Rationale:** The customer understands what prevented checkout and can recover without restarting the process.
+
+**Acceptance Criteria**
+
+- **Normal path:** When the selected payment method is valid and payment succeeds, the customer sees an order confirmation.
+- **Boundary path:** When the selected payment method expires before the customer submits the order, the customer is told it is no longer valid and can select another method.
+- **Failure path:** When payment is rejected because the payment method has expired, no success confirmation is shown; the customer sees an actionable explanation and retains the rest of checkout.
+
+**Decision to Confirm**
+
+Should checkout keep the customer on the same screen and preserve their other information when the selected payment method is expired?
+
+> **Recommended Decision:** Yes. Keep the customer on checkout, explain the issue, and allow them to replace the payment method without re-entering unrelated information.  
+> **Why:** This makes the failure recoverable and avoids unnecessary user effort.
+
+---
+
+## 7. Definition of Done
+
+An `openissue-grill-me` session is done when the user-facing decision tree has been explored to the agreed scope, each accepted decision has been captured in the correct OpenSpec artifact, and remaining unknowns and verification risks are explicitly reported.
+
+The final handoff must include:
+
+1. **Confirmed decisions** — the accepted product behaviors.
+2. **Open decisions** — items that still require user input.
+3. **Risks to verify** — unconfirmed assumptions about current behavior.
+4. **OpenSpec updates** — the exact artifact paths created or modified.
+5. **Validation status** — commands run, results, and anything not verifiable in the current environment.
+
+For an OpenIssue session, also report:
+
+- the requirement id and draft id;
+- whether tasks were generated;
+- the next action the user must explicitly request.

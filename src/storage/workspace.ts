@@ -1,6 +1,8 @@
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { OpenIssueError } from '../core/errors.js';
+import { isRecord } from '../core/guards.js';
+import { toPosix } from '../core/paths.js';
 import type { ProductManifest } from '../core/types.js';
 import { writeTextAtomic } from './atomic.js';
 import {
@@ -13,10 +15,19 @@ import { lookupAnchor, readRegistry, registerAnchor } from './registry.js';
 import YAML from 'yaml';
 
 export const MEMBER_FILE = 'openissue-project.yaml';
+export const WORKSPACE_FILE = '.openissue-workspace.yaml';
 
 export interface MemberEntry {
   id: string;
   anchor?: string;
+}
+
+export interface WorkspacePointer {
+  version: number;
+  product: string;
+  anchor: string;
+  root: string;
+  path: string;
 }
 
 export interface ResolvedChoice {
@@ -71,6 +82,108 @@ export async function findAnchorRoot(start: string): Promise<string | null> {
     if (parent === current) return null;
     current = parent;
   }
+}
+
+export function workspacePointerPath(workspaceRoot: string): string {
+  return path.join(path.resolve(workspaceRoot), WORKSPACE_FILE);
+}
+
+export async function findWorkspacePointerRoot(start: string): Promise<string | null> {
+  return findNearbyFile(start, WORKSPACE_FILE);
+}
+
+export async function readWorkspacePointer(
+  workspaceRoot: string,
+): Promise<WorkspacePointer | null> {
+  const root = path.resolve(workspaceRoot);
+  const file = workspacePointerPath(root);
+  let raw: string;
+  try {
+    raw = await readFile(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new OpenIssueError(
+      `workspace 指针无法读取：${file}（${error instanceof Error ? error.message : String(error)}）`,
+      'WORKSPACE_POINTER_INVALID',
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(raw);
+  } catch (error) {
+    throw new OpenIssueError(
+      `workspace 指针格式无效：${file}（${error instanceof Error ? error.message : String(error)}）`,
+      'WORKSPACE_POINTER_INVALID',
+    );
+  }
+  if (
+    !isRecord(parsed) ||
+    typeof parsed.product !== 'string' ||
+    !parsed.product.trim() ||
+    typeof parsed.anchor !== 'string' ||
+    !parsed.anchor.trim()
+  ) {
+    throw new OpenIssueError(
+      `workspace 指针缺少 product 或 anchor：${file}`,
+      'WORKSPACE_POINTER_INVALID',
+    );
+  }
+  return {
+    version: typeof parsed.version === 'number' ? parsed.version : 1,
+    product: parsed.product.trim(),
+    anchor: parsed.anchor.trim(),
+    root,
+    path: file,
+  };
+}
+
+export function resolvePointerAnchor(pointer: WorkspacePointer): string {
+  return path.isAbsolute(pointer.anchor)
+    ? path.resolve(pointer.anchor)
+    : path.resolve(pointer.root, pointer.anchor);
+}
+
+export async function validateWorkspacePointer(pointer: WorkspacePointer): Promise<{
+  anchorRoot: string;
+  product: ProductManifest;
+}> {
+  const anchorRoot = resolvePointerAnchor(pointer);
+  if (!(await productExists(anchorRoot))) {
+    throw new OpenIssueError(
+      `workspace 指针指向的锚点失效：${anchorRoot}。请运行 openissue init --rescan 或 openissue init --anchor <path> 修复。`,
+      'WORKSPACE_POINTER_INVALID',
+    );
+  }
+  const product = await readProduct(anchorRoot);
+  if (product.id !== pointer.product) {
+    throw new OpenIssueError(
+      `workspace 指针的产品 ${pointer.product} 与锚点产品 ${product.id} 不一致。请运行 openissue init --rescan 修复。`,
+      'WORKSPACE_POINTER_INVALID',
+    );
+  }
+  return { anchorRoot, product };
+}
+
+export async function writeWorkspacePointer(
+  workspaceRoot: string,
+  product: string,
+  anchorRoot: string,
+): Promise<WorkspacePointer> {
+  const root = path.resolve(workspaceRoot);
+  const relative = path.relative(root, path.resolve(anchorRoot)) || '.';
+  const anchor = toPosix(relative);
+  const file = workspacePointerPath(root);
+  await writeTextAtomic(
+    file,
+    YAML.stringify({ version: 1, product, anchor }, { lineWidth: 0 }),
+  );
+  return {
+    version: 1,
+    product,
+    anchor,
+    root,
+    path: file,
+  };
 }
 
 export async function readMemberPointer(memberRoot: string): Promise<{
@@ -148,6 +261,23 @@ export async function resolveWorkspace(
 
   const memberRoot = await findNearbyFile(start, MEMBER_FILE);
   if (!memberRoot) {
+    const pointerRoot = await findWorkspacePointerRoot(start);
+    if (pointerRoot) {
+      const pointer = await readWorkspacePointer(pointerRoot);
+      if (!pointer) {
+        throw new OpenIssueError(
+          `workspace 指针无法读取：${pointerRoot}`,
+          'WORKSPACE_POINTER_INVALID',
+        );
+      }
+      const resolved = await validateWorkspacePointer(pointer);
+      return {
+        kind: 'anchor',
+        root: pointerRoot,
+        anchorRoot: resolved.anchorRoot,
+        product: resolved.product,
+      };
+    }
     const root = (await findGitRoot(start)) ?? path.resolve(start);
     return { kind: 'unregistered', root };
   }

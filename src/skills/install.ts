@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, readdir, rm } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, rmdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { OpenIssueError } from '../core/errors.js';
 import { VERSION } from '../core/version.js';
@@ -236,6 +236,121 @@ export function summarizeInstall(results: ToolInstallResult[]): string {
   );
   const roots = results.map((result) => result.root);
   return `已安装 ${total} 个 skill 文件到 ${roots.length} 个目录（写入 ${changed} 个；${total - changed} 个未变化）`;
+}
+
+export interface SkillPromotionResult {
+  status: 'missing' | 'unchanged' | 'promoted' | 'conflict' | 'failed';
+  source: string;
+  target: string;
+  conflicts: string[];
+  message?: string;
+}
+
+export async function promoteSkillsDirectory(
+  sourceProjectRoot: string,
+  targetProjectRoot: string,
+  options: { force?: boolean } = {},
+): Promise<SkillPromotionResult> {
+  const source = path.join(path.resolve(sourceProjectRoot), '.agents', 'skills');
+  const target = path.join(path.resolve(targetProjectRoot), '.agents', 'skills');
+  if (source === target) {
+    return { status: 'unchanged', source, target, conflicts: [] };
+  }
+  if (!(await exists(source))) {
+    return { status: 'missing', source, target, conflicts: [] };
+  }
+
+  const files = await listFiles(source);
+  if (files.length === 0) {
+    return { status: 'unchanged', source, target, conflicts: [] };
+  }
+
+  const plans: Array<{ source: string; target: string; content: string }> = [];
+  const conflicts: string[] = [];
+  for (const relative of files) {
+    if (relative === '.openissue-skills.json') continue;
+    const sourceFile = path.join(source, relative);
+    const targetFile = path.join(target, relative);
+    const content = await readFile(sourceFile, 'utf8');
+    let current: string | undefined;
+    try {
+      current = await readOptional(targetFile);
+    } catch {
+      conflicts.push(relative);
+      continue;
+    }
+    if (current === undefined || current === content || options.force) {
+      plans.push({ source: sourceFile, target: targetFile, content });
+      continue;
+    }
+    conflicts.push(relative);
+  }
+
+  if (conflicts.length > 0) {
+    return {
+      status: 'conflict',
+      source,
+      target,
+      conflicts,
+      message: `提升 OpenSpec skills 时遇到冲突：同名不同内容文件 ${conflicts.join('、')}。原副本已保留。`,
+    };
+  }
+
+  try {
+    await mkdir(target, { recursive: true });
+    for (const plan of plans) {
+      await writeTextAtomic(plan.target, plan.content);
+    }
+    for (const plan of plans) {
+      const current = await readOptional(plan.target);
+      if (current !== plan.content) {
+        return {
+          status: 'failed',
+          source,
+          target,
+          conflicts: [],
+          message: `提升后校验失败：${plan.target}`,
+        };
+      }
+    }
+  } catch (error) {
+    return {
+      status: 'failed',
+      source,
+      target,
+      conflicts: [],
+      message: `提升 OpenSpec skills 失败：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+
+  try {
+    await rm(source, { recursive: true, force: false });
+    await rmdir(path.dirname(source)).catch(() => undefined);
+  } catch (error) {
+    return {
+      status: 'failed',
+      source,
+      target,
+      conflicts: [],
+      message: `合并成功但清理 spec 仓副本失败：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+
+  return { status: 'promoted', source, target, conflicts: [] };
+}
+
+async function listFiles(root: string, prefix = ''): Promise<string[]> {
+  const entries = await readdir(path.join(root, prefix), { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const relative = prefix ? path.join(prefix, entry.name) : entry.name;
+    if (entry.isDirectory()) {
+      files.push(...(await listFiles(root, relative)));
+    } else {
+      files.push(relative);
+    }
+  }
+  return files.sort((left, right) => left.localeCompare(right));
 }
 
 function buildManifest(

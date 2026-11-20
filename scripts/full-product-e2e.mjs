@@ -59,16 +59,20 @@ function step(message) {
 
 try {
   await Promise.all([anchor, memberA, memberB].map((dir) => mkdir(dir, { recursive: true })));
-  await Promise.all([memberA, memberB].map((dir) => mkdir(path.join(dir, '.git'))));
-
-  run(['init', '--id', 'demo', '--name', 'Demo E2E', '--skills', 'agents'], anchor);
-  step('在锚点仓库初始化产品');
-
+  await Promise.all(
+    [anchor, memberA, memberB].map((dir) => mkdir(path.join(dir, '.git'), { recursive: true })),
+  );
   await Promise.all([
     mkdir(path.join(anchor, 'openspec', 'changes'), { recursive: true }),
     mkdir(path.join(anchor, 'openspec', 'specs'), { recursive: true }),
   ]);
   await writeFile(path.join(anchor, 'openspec', 'config.yaml'), 'schema: spec-driven\n', 'utf8');
+
+  run(
+    ['init', '--id', 'demo', '--name', 'Demo E2E', '--skills', 'agents', '--yes'],
+    anchor,
+  );
+  step('在单仓锚点初始化产品并安装共享 skills');
 
   run(['register', '--anchor', '../anchor'], memberA);
   run(['register', '--anchor', '../anchor'], memberB);

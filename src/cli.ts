@@ -9,10 +9,11 @@ import { registerDependencyCommands } from './commands/dependencies.js';
 import { registerEditCommand } from './commands/edit.js';
 import { registerFocusCommand } from './commands/focus.js';
 import { registerHandoffCommands } from './commands/handoff.js';
+import { registerInitCommand } from './commands/init.js';
 import { registerListCommand } from './commands/list.js';
 import { registerLifecycleCommands } from './commands/lifecycle.js';
 import { registerPriorityCommand } from './commands/priority.js';
-import { registerWorkspaceCommands } from './commands/register.js';
+import { registerRegisterCommand } from './commands/register.js';
 import { registerSkillsCommands } from './commands/skills.js';
 import { registerStartCommand } from './commands/start.js';
 import { registerTierCommand } from './commands/tier.js';
@@ -38,7 +39,8 @@ export function createProgram(): Command {
   registerTierCommand(program);
   registerStartCommand(program);
   registerHandoffCommands(program);
-  registerWorkspaceCommands(program);
+  registerInitCommand(program);
+  registerRegisterCommand(program);
   registerSkillsCommands(program);
   return program;
 }
