@@ -17,14 +17,51 @@ Walk the decision tree branch by branch. Focus on what a person does, sees, expe
 
 ## 0. OpenIssue Scope and Draft Lifecycle
 
-Use this skill only when the OpenSpec work originates from an OpenIssue requirement.
+Use this skill when the OpenSpec work originates from an OpenIssue requirement, whether the user provides an issue id or describes the requirement in natural language.
 
 - For a direct OpenSpec request with no OpenIssue requirement source, use the standard propose workflow instead.
 - If the source is ambiguous, ask whether the work corresponds to an OpenIssue requirement before creating a proposal or modifying a requirement.
-- `openissue start <id>` is the only entry point for a new proposal. 
-- Planning stops at `tasks.md`. Do not implement code, enter OpenSpec apply, or close the requirement inside this skill.
+- An interview may start only from an open OpenIssue requirement. If no requirement exists, create one with `openissue create`, then enter the interview.
+- The interview context is always obtained through `openissue start <id> --json`; that command does not create a proposal.
+- Planning artifacts are `proposal.md`, `specs/`, and `design.md`; `tasks.md` is not part of the planning scope. Generate tasks only after the user explicitly ends the interview, then stop before implementation, OpenSpec apply, or closing the requirement.
 
-### 0.1 Resolve the start state
+### 0.1 Resolve the requirement
+
+If the user provides an issue id, use it. If the user describes a requirement in natural language without an id, find or create the requirement before starting the interview:
+
+1. Read the requirement inbox from the current workspace or a registered member repository:
+
+   ```bash
+   openissue list --status all --json
+   ```
+
+2. Compare the user's description with issue titles and descriptions. Look for the same user intent and product behavior, not only exact title matches. Mention product synonyms and related wording when they help identify a match.
+
+3. If exactly one open issue is a clear match, show its id, title, and status, then use it. Do not create a duplicate.
+
+4. If several issues are plausible, or a similar issue covers a different scope, list the candidates and ask the user whether to continue an existing issue or create a new one.
+
+5. If only closed issues match, do not silently reuse them. Ask whether to reopen the matching issue or create a new one.
+
+6. If no relevant issue exists, create one from the user's description:
+
+   ```bash
+   openissue create "<concise title>" --description "<user description and evidence>" --json
+   ```
+
+   Use the returned id. Preserve the user's wording, distinguish confirmed facts from unknowns, and do not invent reproduction steps, priority, or acceptance criteria. Report the new id and title to the user.
+
+7. If listing or creating the requirement fails, stop and report the failure. Do not create an OpenSpec draft.
+
+8. After an open issue exists, run:
+
+   ```bash
+   openissue start <id> --json
+   ```
+
+   Then continue with Section 0.3. Do not create an OpenSpec proposal before this step.
+
+### 0.2 Resolve the start state
 
 When the user provides a requirement id and asks to start OpenSpec work, read the requirement context first:
 
@@ -45,7 +82,7 @@ Read the returned instruction and proposal state. Resolve the state before askin
 
 Do not create an empty or second proposal while a choice is still unresolved.
 
-### 0.2 Create or take over the draft
+### 0.3 Create or take over the draft
 
 When a new draft is required, create the OpenSpec change and then link it as an interview draft:
 
@@ -70,7 +107,7 @@ openissue show <id> --json
 
 The requirement must remain open, show the linked proposal, and carry the incomplete-interview marker. The marker is an overlay; it must not introduce a third lifecycle state.
 
-### 0.3 Stable draft identity
+### 0.4 Stable draft identity
 
 - Prefer an ASCII slug generated from the requirement title.
 - If the title cannot produce a valid slug, use the lowercase requirement id.
@@ -78,7 +115,7 @@ The requirement must remain open, show the linked proposal, and carry the incomp
 - Fail before creating anything when the id is invalid or conflicts with an unrelated proposal.
 - Once created, keep the draft id stable. Do not rename the directory or references because the interview scope or title wording changes.
 
-### 0.4 Resume, discard, and handoff
+### 0.5 Resume, discard, and handoff
 
 - If the interview is interrupted or cancelled, keep the draft and mark it as interview-incomplete. The requirement remains open.
 - Resume with `openissue start <id> --json`; continue the same draft.
@@ -323,17 +360,33 @@ Use `design.md` to explain how the chosen behavior will be delivered, not to red
 
 Do not create `design.md` merely to store trivial choices when the configured OpenSpec schema says it can be skipped.
 
-### 4.5 Generate tasks only after the explicit end action
+### 4.5 End the interview, review planning artifacts, and generate TDD tasks
 
-`tasks.md` MUST NOT be generated or rewritten during the interview. Generate tasks only after the user explicitly selects **End interview and generate tasks**.
+`tasks.md` MUST NOT be generated or rewritten during the interview. Generate tasks only after the user explicitly selects **End interview and generate tasks**. When the user or the Agent believes the interview is complete, the Agent MUST make the transition explicit:
 
-Before generating tasks:
+1. If the user has not explicitly ended the interview, state that the interview appears complete and ask for explicit confirmation. Do not silently treat Agent confidence as approval.
+2. After explicit confirmation, announce in the user's language:
 
-1. Show a concise summary of confirmed decisions, open decisions, and risks.
-2. Check for unresolved items.
-3. If unresolved items remain, list them and stop. Let the user continue the interview or explicitly move an item out of scope.
+   > The interview has ended. I will now review and consolidate the planning artifacts, read the project's TDD guidance, and generate TDD-compliant tasks.
 
-After the open items are resolved, generate `tasks.md` in test-first order:
+3. Review and consolidate `proposal.md`, `specs/`, and `design.md` before generating tasks:
+   - every accepted decision is captured in its owning artifact;
+   - no unresolved decision is written as confirmed;
+   - specs have normal, boundary, and failure scenarios where applicable;
+   - design decisions and trade-offs are consistent with specs;
+   - planning artifacts do not contain or depend on generated tasks;
+   - stale or contradictory content is corrected.
+4. Read the project's TDD guidance before writing tasks. Inspect the relevant `AGENTS.md`, `README.md`, testing documentation, existing test layout and commands, and the OpenSpec tasks instructions:
+
+   ```bash
+   openspec instructions tasks --change <change-id> --json
+   ```
+
+   Apply the project's actual TDD conventions. If guidance is unavailable or conflicting, state the limitation and use this skill's RED/GREEN/REFACTOR/INTEGRATE structure rather than claiming a standard was read.
+5. Show a concise summary of confirmed decisions, open decisions, and risks.
+6. Check for unresolved items; if any remain, list them and stop. Let the user continue the interview or explicitly move an item out of scope.
+
+After the open items are resolved and the planning artifacts are reviewed, generate `tasks.md` in test-first order:
 
 - Group tasks by behavior slice under numbered `##` headings.
 - Use tracked checkbox tasks in the form `- [ ] X.Y <task description>`.
@@ -347,7 +400,7 @@ After the open items are resolved, generate `tasks.md` in test-first order:
 
 Task wording may refer to implementation work, but verification must trace back to the user-visible scenarios in the spec. Do not mark tasks complete unless the work and its verification have actually been completed.
 
-After generating tasks, stop. The planning flow stops after tasks. Show the task summary and verification method, and state that implementation requires a separate explicit request. Do not modify business code or enter OpenSpec apply in the same action.
+After generating tasks, stop. The planning artifacts are complete before tasks; tasks are a separate handoff artifact, not part of planning. Show the task summary and verification method, and state that implementation requires a separate explicit request. Do not modify business code or enter OpenSpec apply in the same action.
 
 If a confirmed behavior later changes, state that existing tasks may be stale. Do not treat them as still valid. Regenerate them only after the user explicitly ends the interview again.
 

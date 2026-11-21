@@ -84,7 +84,7 @@ Single-repo init uses the current repo as anchor with no workspace pointer or ro
 | `src/board/`                        | `server.ts` HTTP routes/actions, `data.ts` shared board data, `render.ts` server-rendered HTML |
 | `src/services/`                     | `workspace-init.ts` anchor/member discovery, pointer, new project scaffold, phases/retry; `handoff.ts` OpenSpec metadata (`x-openissue-issues`, `x-openissue-interview`), interview entry context, resume/discard, archive detection, snapshot diff |
 | `src/skills/`                       | `catalog.ts` bundled asset loading + tool table; `manifest.ts` hash manifest; `install.ts` install/status/update + OpenSpec `.agents/skills` promotion |
-| `skills/`                           | Five installable `SKILL.md` workflows; included in npm `files` |
+| `skills/`                           | Four installable `SKILL.md` workflows; initialization lives in README, not a skill |
 | `src/core/`                         | `types.ts` canonical schema; `errors.ts`; `id.ts` ID/slug generation; `paths.ts`; `hash.ts`; `author.ts`; `guards.ts`                                                                                        |
 | `src/domain/`                       | Pure rules: `dependencies.ts`, `priority.ts`, `assistant.ts`, `search.ts`, `lifecycle.ts`, `manual.ts`                                                                                                       |
 | `src/storage/`                      | `issue.ts`, `product.ts`, `registry.ts`, `workspace.ts` (member + workspace pointers), `openspec.ts` (OpenSpec data/store detection), `frontmatter.ts`, `atomic.ts`, `facts.ts`                                      |
@@ -182,7 +182,7 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 
 ## Implementation Status
 
-`establish-openissue-v1`, `add-openissue-skills`, and `adopt-grill-me-entry` are archived. `add-workspace-init` has all 28 tasks complete and is validated; archive remains a separate step after the dependency order is confirmed.
+`establish-openissue-v1`, `add-openissue-skills`, and `adopt-grill-me-entry` are archived. `add-workspace-init` has all 33 tasks complete and is validated; archive remains a separate step after the dependency order is confirmed.
 
 Implemented:
 
@@ -192,7 +192,7 @@ Implemented:
 - OpenSpec interview entry and handoff: `start`, active-proposal takeover, `x-openissue-interview` incomplete state, resume/discard, `--link` association, snapshot diff, archive detection, and explicit completion confirmation.
 - OpenSpec facts (specs, active/archived proposals, task progress), input-hash cache/staleness, and manual/rule precedence.
 - Cross-platform CI workflow, Playwright suite, and full-product end-to-end script.
-- Five installable Agent skills (`openissue-onboard/capture/triage/grill-me/handoff`) with `openissue skills list|install|status|update`, hash manifest conflict protection, and default `init` installation to `.agents/skills`.
+- Four installable Agent skills (`openissue-capture/triage/grill-me/handoff`) with `openissue skills list|install|status|update`, hash manifest conflict protection, and default `init` installation to `.agents/skills`. Initialization is documented in README and is not a skill, so a fresh install never depends on an already-installed skill.
 - `openissue init` workspace discovery: lightweight `.openissue-workspace.yaml` pointer, OpenIssue/complete-OpenSpec anchor candidates, store-pointer exclusion, member preselection/conflicts, single-repo in-place init, new-project `<id>/` + `<id>-spec/` scaffold, OpenSpec agents promotion, managed root `AGENTS.md` index, and phase-aware failure/retry reporting.
 - `openissue start` interview entry with active-proposal takeover, incomplete-interview resume/discard, Board copyable context, and `handoff --link` as the only manual association path.
 

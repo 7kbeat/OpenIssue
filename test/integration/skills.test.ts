@@ -15,7 +15,6 @@ const skillNames = [
   'openissue-capture',
   'openissue-grill-me',
   'openissue-handoff',
-  'openissue-onboard',
   'openissue-triage',
 ];
 
@@ -97,12 +96,20 @@ describe('bundled skills', () => {
     expect(grill).toContain('## 6. Illustrative Example');
     expect(grill).toContain('## 7. Definition of Done');
     expect(grill).toContain('openissue start <id>');
+    expect(grill).toContain('openissue list --status all --json');
+    expect(grill).toContain('openissue create "<concise title>"');
+    expect(grill).toContain('### 0.1 Resolve the requirement');
+    expect(grill).toContain('Do not create an OpenSpec proposal before this step.');
     expect(grill).toContain('--from-interview');
     expect(grill).toContain('proposal');
     expect(grill).toContain('specs');
     expect(grill).toContain('design');
     expect(grill).toContain('End interview and generate tasks');
-    expect(grill).toContain('stops after tasks');
+    expect(grill).toContain('not part of the planning scope');
+    expect(grill).toContain('tasks are a separate handoff artifact');
+    expect(grill).toContain('The interview has ended');
+    expect(grill).toContain("project's TDD guidance");
+    expect(grill).toContain('openspec instructions tasks --change');
     expect(grill).toContain('standard propose');
     expect(grill).toContain('RED');
     expect(grill).toContain('GREEN');

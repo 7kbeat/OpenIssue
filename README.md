@@ -38,13 +38,14 @@ pnpm e2e:product
 
 ## 配套 Agent skills
 
-OpenIssue 随包提供五份 Agent workflow skills：
+OpenIssue 随包提供四份 Agent workflow skills：
 
-- `openissue-onboard`：初始化产品、登记成员仓库、安装 skills；
 - `openissue-capture`：把想法或 bug 捕获为需求，只记录不实现；
 - `openissue-triage`：按项目事实、依赖与手动覆盖审阅优先级；
 - `openissue-grill-me`：从成熟需求开始产品决策访谈，自动创建提案草稿并增量写入 proposal/specs/design；用户明确结束访谈后才生成 TDD tasks；
 - `openissue-handoff`：重新关联已有提案，并在全部关联提案归档后由用户确认完成。
+
+初始化不是随包 skill。首次接入请按本文“快速开始”运行 `openissue init`；初始化完成时才会安装上述 skills，避免“必须先安装 onboard 才能初始化”的循环。
 
 查看并安装：
 
@@ -75,6 +76,119 @@ openissue skills install --tool claude,opencode
 ```
 
 skills 随 npm 包分发；`pnpm pack` 可用于检查打包内容。
+
+## 使用流程
+
+### 总体使用流程
+
+```mermaid
+flowchart TD
+  A[安装 openissue CLI] --> B{当前目录}
+  B -->|已有 workspace 或单仓| C[openissue init]
+  B -->|空 workspace 或新项目| D[openissue init --new --name 英文项目名]
+  C --> E[发现锚点与成员<br/>写入 workspace 指针<br/>安装共享 skills]
+  D --> E
+  E --> F[描述需求或提供 issue id]
+  F --> G{需求库有明确匹配?}
+  G -->|有| H[openissue show ID]
+  G -->|没有| I[openissue create 标题与描述]
+  I --> H
+  H --> J{需求已成熟?}
+  J -->|否| K[继续收件箱<br/>补充、triage、priority、board]
+  K --> J
+  J -->|是| L[openissue start ID --json]
+  L --> M[Agent 运行 openissue-grill-me]
+  M --> N[规划产物<br/>proposal / specs / design<br/>不含 tasks]
+  N --> N2{用户或 Agent 判断访谈结束?}
+  N2 -->|否| M
+  N2 -->|是| O[提示访谈已结束<br/>review 并整理 proposal / specs / design<br/>阅读 TDD 规范]
+  O --> P[生成 TDD tasks<br/>RED / GREEN / REFACTOR / INTEGRATE]
+  P --> Q[停止<br/>不改代码、不进入 apply、不自动关闭需求]
+  Q --> R[用户另行明确要求实现]
+  R --> S[标准 OpenSpec apply 与 archive]
+  S --> T[全部关联提案归档后<br/>openissue confirm]
+  T --> U[需求关闭为已完成]
+```
+
+### 与 OpenSpec 交接的业务流程
+
+```mermaid
+sequenceDiagram
+  actor User
+  participant Agent as grill-me Agent
+  participant OI as OpenIssue CLI / 需求库
+  participant OS as OpenSpec 变更
+
+  User->>Agent: 描述需求或提供 issue id
+  alt 未提供 issue id
+    Agent->>OI: openissue list --status all --json
+    OI-->>Agent: 需求列表（含标题与描述）
+    alt 唯一匹配的打开需求
+      Agent->>User: 确认复用该需求
+    else 多个候选或仅关闭需求
+      Agent->>User: 列出候选并询问复用、重开或新建
+      User-->>Agent: 选择需求
+    else 无匹配
+      Agent->>OI: openissue create 标题 --description 描述 --json
+      OI-->>Agent: 新 issue id
+    end
+  end
+
+  Agent->>OI: openissue start ID --json
+  OI-->>Agent: 需求上下文与草稿状态
+
+  alt 无活跃提案
+    Agent->>OS: openspec new change CHANGE_ID --description 需求背景 --json
+    Agent->>OI: openissue handoff ID --link CHANGE_ID --from-interview
+    OI-->>OS: 写入需求关联与访谈标记
+  else 未完成草稿
+    Agent->>OS: 继续同一草稿
+  else 唯一活跃提案
+    Agent->>OS: 接管并标记访谈未完成
+  else 多个活跃提案
+    Agent->>User: 选择要接管的提案
+  else 仅有归档提案或关联失效
+    Agent->>User: 说明不能接管，等待重新关联或新建决定
+  end
+
+  loop 每个未决产品决策
+    Agent->>User: 一次一个问题（用户操作、成功、边界、失败）
+    User-->>Agent: 确认决策
+    Agent->>OS: 立即增量写入 proposal / specs / design
+  end
+  Note over Agent,OS: 规划阶段只写 proposal / specs / design，不生成 tasks
+
+  opt Agent 判断访谈已结束且用户尚未明确确认
+    Agent->>User: 访谈看起来已完成，请确认是否结束
+    User-->>Agent: 确认结束
+  end
+  User->>Agent: 结束访谈并生成任务
+  Agent->>User: 当前访谈已结束；将 review 规划产物并阅读 TDD 规范
+  Agent->>OS: review 并整理 proposal / specs / design
+  Agent->>Agent: 阅读 AGENTS、README、测试规范与 openspec tasks instructions
+  Agent->>Agent: 检查未决项
+  alt 仍有未决项
+    Agent->>User: 列出未决项，继续访谈
+  else 无未决项
+    Agent->>OS: 生成 TDD tasks（RED/GREEN/REFACTOR/INTEGRATE）
+    Note over Agent,OS: 到此停止：不改代码、不进入 apply、不自动关闭需求
+    opt 用户另行明确要求实现
+      Agent->>OS: 标准 OpenSpec apply 与 archive
+      Agent->>OI: openissue show ID --json 确认全部关联提案已归档
+      Agent->>User: 展示待确认完成
+      User->>OI: openissue confirm ID
+      OI-->>User: 需求关闭为已完成
+    end
+  end
+```
+
+边界说明：
+
+- 没有 OpenIssue 来源的直接 OpenSpec 请求仍走标准 propose，不创建 OpenIssue 草稿。
+- `openissue handoff --link` 只用于重新关联已有提案；命令会提示该路径跳过产品决策访谈。
+- 用户或 Agent 判断访谈结束时，Agent 必须先提示访谈已经结束；若用户尚未确认，先请求确认。确认后 review 并整理 proposal/specs/design，阅读项目 TDD 规范与 OpenSpec tasks instructions，再生成符合 TDD 的 tasks。
+- 访谈中断时草稿与关联保留，需求保持打开；丢弃草稿必须二次确认。
+- 已归档提案不能被接管；全部关联提案归档后仍需用户明确确认，系统不自动关闭需求。
 
 ## 数据布局
 
@@ -275,6 +389,8 @@ openissue reopen OI-20261120-ABCD
 openissue start OI-20261120-ABCD
 openissue start OI-20261120-ABCD --json
 ```
+
+也可以直接把需求描述交给 Agent，而不先提供 id。Agent 会先读取需求库查重：唯一明确匹配则复用，多个候选则让你选择，只有已关闭需求则询问重开或新建；没有相关需求时，用 `openissue create` 创建，再运行 `openissue start <id>` 进入访谈。
 
 `start` 只输出需求上下文与可交给 Agent 的启动指令，不创建提案、不改需求。把输出交给 Agent 后，`openissue-grill-me` 会：
 
