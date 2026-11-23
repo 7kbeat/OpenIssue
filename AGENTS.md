@@ -136,9 +136,15 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 | `src/commands/context.ts`                                          | `activeWorkspace()`; canonical zh-CN errors for unregistered/ambiguous/missing states                                   |
 | `src/storage/workspace.ts`                                         | Anchor/member/registry resolution; `MEMBER_FILE = 'openissue-project.yaml'`; `WORKSPACE_FILE = '.openissue-workspace.yaml'`; legacy pointer migration |
 | `src/storage/openspec.ts`                                          | Complete OpenSpec data vs store-pointer detection; `openspec init` invocation |
-| `src/commands/init.ts`                                             | Workspace/single/new-project init flags and report output |
+| `src/commands/init.ts`                                             | Init flags, `--zh/--en`, TUI/non-interactive dispatch, JSON error envelope, report output |
 | `src/services/workspace-init.ts`                                   | Anchor/member scanning, confirmations, pointer writes, scaffold, AGENTS index, phase reporting |
+| `src/services/init-plan.ts`                                        | Read-only init plan: mode detection, anchors, members, OpenSpec/Skills choices, write paths |
+| `src/services/init-tui.ts`                                         | Full-screen TUI state machine, step wizard, language switch, review, retry/exit |
+| `src/core/language.ts`                                             | `zh`/`en` resolution, system-locale mapping, explicit/workspace/last-explicit precedence |
+| `src/storage/preferences.ts`                                       | `$OPENISSUE_HOME/preferences.yaml` language preference storage and inheritance |
 | `test/integration/workspace-init.test.ts`                          | Root pointer, discovery, members, scaffold, skills/AGENTS, failure/retry coverage |
+| `test/integration/init-language.test.ts`                           | Language flags, persistence, inheritance, OpenSpec language, JSON errors |
+| `test/unit/init-plan.test.ts` / `init-tui.test.ts`                 | Plan model, TUI key handling, wizard journey, cancel/language switch |
 | `src/storage/issue.ts`                                             | Schema parsing, conflict collection, atomic mutation, `publicIssue()`                                                   |
 | `src/storage/product.ts`                                           | `openissue/product.yaml` read/write; `initProduct`, `addMember`                                                         |
 | `src/storage/registry.ts`                                          | `$OPENISSUE_HOME/registry.yaml`; machine-local anchor paths                                                             |
@@ -151,7 +157,7 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 | `src/services/handoff.ts`                                          | OpenSpec link/archive/snapshot orchestration and interview metadata     |
 | `src/skills/install.ts`                                            | Skill install/status/update; interview-skill availability check         |
 | `src/skills/catalog.ts`                                            | Bundled skill loading, frontmatter validation, tool/alias table        |
-| `skills/*/SKILL.md`                                                | Agent-facing workflows: onboard, capture, triage, grill-me, handoff    |
+| `skills/*/SKILL.md`                                                | Agent-facing workflows: capture, triage, grill-me, handoff             |
 | `src/board/server.ts`                                              | Local HTTP server and API actions                                       |
 | `test/e2e/board.spec.ts`                                           | Playwright board/search/single-user coverage                            |
 | `src/core/types.ts`                                                | Canonical `Issue`, `ProductManifest`, `PriorityView*` shapes                                                            |
@@ -171,10 +177,10 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 
 ## Testing & QA
 
-- **Runner**: Vitest, `test/**/*.test.ts`, `test/e2e/**` excluded, 20s test/hook timeout. Current suite: 16 files / 118 tests. No coverage thresholds.
-- **Layers**: `test/unit/paths.test.ts` (pure helpers), `test/fixtures.test.ts` (fixture smoke, invokes real `openspec`), `test/smoke.test.ts` (CLI version), `test/integration/{capture,edit,workspace,workspace-init,lifecycle,dependencies,priority,assistant,handoff,grill-entry,board,search,skills}.test.ts` (real CLI/board + temp dirs), `test/e2e/board.spec.ts` (Playwright).
+- **Runner**: Vitest, `test/**/*.test.ts`, `test/e2e/**` excluded, 20s test/hook timeout. Current suite: 20 files / 155 tests. No coverage thresholds.
+- **Layers**: `test/unit/{paths,language,init-plan,init-tui}.test.ts` (pure helpers, language, plan, TUI state), `test/fixtures.test.ts` (fixture smoke, invokes real `openspec`), `test/smoke.test.ts` (CLI version), `test/integration/{capture,edit,workspace,workspace-init,init-language,lifecycle,dependencies,priority,assistant,handoff,grill-entry,board,search,skills}.test.ts` (real CLI/board + temp dirs), `test/e2e/board.spec.ts` (Playwright).
 - **Integration harness**: `runCli(args, { cwd, env })` spawns `node node_modules/tsx/dist/cli.mjs src/cli.ts …`; **no build required**. Always isolate with `OPENISSUE_HOME=<temp>/.home` and `OPENISSUE_AUTHOR=测试作者`. Track temp dirs and clean them in `afterEach` via `Promise.all(cleanup.splice(0).map(x => x.cleanup()))`.
-- **Assertions are behavioral**: exit status, zh-CN stderr substrings, on-disk YAML/body, and `--json` stdout. Tests deliberately assert raw file equality when a command must not mutate data. Prefer these over mocking internals.
+- **Assertions are behavioral**: exit status, expected-language stderr substrings, on-disk YAML/body, and `--json` stdout. Tests deliberately assert raw file equality when a command must not mutate data. Prefer these over mocking internals.
 - **Cross-platform expectations**: every path-related change must work on Windows and POSIX; specs additionally require a POSIX-separator fixture (already covered by `workspace.test.ts`).
 - **When changing behavior**: add/update the integration test that exercises the observable contract; keep `no delete`, mandatory close reason, conflict visibility, and dependency-floor semantics intact. Run the narrowest file with `pnpm exec vitest run <file>`, then `pnpm test` and `pnpm typecheck`.
 - **CI** (`.github/workflows/ci.yml`): matrix ubuntu/windows × node 22/24 → install, install OpenSpec 1.10, build, test, Playwright install + `pnpm test:e2e`, then `pnpm e2e:product`. Remote Actions has not been run in this workspace; treat that as an external verification gap.
@@ -182,7 +188,7 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 
 ## Implementation Status
 
-`establish-openissue-v1`, `add-openissue-skills`, and `adopt-grill-me-entry` are archived. `add-workspace-init` has all 33 tasks complete and is validated; archive remains a separate step after the dependency order is confirmed.
+`establish-openissue-v1`, `add-openissue-skills`, and `adopt-grill-me-entry` are archived. `add-workspace-init` has all 71 tasks complete and is validated, including the visual init, language preference, and Agent JSON work. Archive remains a separate step after the dependency order is confirmed.
 
 Implemented:
 
@@ -194,11 +200,14 @@ Implemented:
 - Cross-platform CI workflow, Playwright suite, and full-product end-to-end script.
 - Four installable Agent skills (`openissue-capture/triage/grill-me/handoff`) with `openissue skills list|install|status|update`, hash manifest conflict protection, and default `init` installation to `.agents/skills`. Initialization is documented in README and is not a skill, so a fresh install never depends on an already-installed skill.
 - `openissue init` workspace discovery: lightweight `.openissue-workspace.yaml` pointer, OpenIssue/complete-OpenSpec anchor candidates, store-pointer exclusion, member preselection/conflicts, single-repo in-place init, new-project `<id>/` + `<id>-spec/` scaffold, OpenSpec agents promotion, managed root `AGENTS.md` index, and phase-aware failure/retry reporting.
+- `openissue init` visual flow: TTY-only full-screen navigation, auto-detected mode/language first screen, dynamic step wizard, grouped review, skills conflict handling, `--json` non-interactive contract, structured `init` failures, and retry/exit after partial writes.
+- `openissue init --zh/--en`: system-default language (`zh*` Chinese, other English), explicit → workspace → last-explicit → system precedence, per-workspace `$OPENISSUE_HOME/preferences.yaml`, new-workspace inheritance, localized human text, and OpenSpec artifact language for new projects only.
 - `openissue start` interview entry with active-proposal takeover, incomplete-interview resume/discard, Board copyable context, and `handoff --link` as the only manual association path.
 
 Known gaps / external conditions:
 
 - GitHub Actions has not been run remotely in this workspace; only the equivalent local commands have been verified.
+- Default `pnpm test:e2e` cannot launch because downloaded Playwright Chromium is missing; the same 4 tests pass with system Chrome (`channel: 'chrome'`).
 - `src/core/version.ts` and `package.json` must stay in sync; a test enforces it.
 - Multi-product sharing of one anchor repo remains a deferred design question, as recorded in the change design.
 - `../OpenIssue-spec-issue/openspec/changes/establish-openissue-v1/tasks.md` is now 71/71 checked; future scope changes should go through a new OpenSpec change and `openspec validate --strict`.

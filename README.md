@@ -265,6 +265,68 @@ openissue init --rescan
 openissue init --anchor <锚点路径>
 ```
 
+#### 可视化界面
+
+在交互式终端（TTY）且未传 `--json` 时，`openissue init` 会进入全屏可导航界面：
+
+- 首屏显示检测到的模式、判断依据、当前语言与可改选入口；
+- 按步骤处理环境与语言、产品/锚点、成员、Skills、OpenSpec 与 Review；
+- 单仓会跳过锚点/成员，已有 workspace 指针会跳过重复发现；
+- Review 展示选择、将写入路径与跳过项；确认前不写产品数据；
+- 执行失败保留已创建内容，结果页只提供“重试 / 退出”。
+
+`--json` 即使运行在 TTY 中也强制非交互，不会启动可视化界面或等待键盘输入。
+
+#### 语言
+
+```bash
+openissue init --zh
+openissue init --en
+```
+
+- 默认跟随系统语言：`zh*` 使用中文，其他及无法识别的语言使用英文。
+- 优先级为：显式 `--zh` / `--en` → 当前 workspace 偏好 → 最近一次显式设置 → 系统语言。
+- 语言偏好按 workspace/产品独立保存，位置为 `$OPENISSUE_HOME/preferences.yaml`；新 workspace 会继承最近一次显式设置。
+- 显式选择会立即保存；取消初始化不会回滚语言偏好，但不会写入产品数据。
+- 语言覆盖初始化界面、可读输出与本次新建 OpenSpec 产物的语言；已有 OpenSpec 不会因语言切换被改写。
+- `--zh` 与 `--en` 互斥；同时使用会返回 `LANGUAGE_CONFLICT`，不启动界面、不写入、不更新偏好。
+- `--help` 静态文案暂不随语言切换。
+
+#### Agent 初始化指令
+
+Agent 必须使用显式 flags 与 `--json`，不要尝试操作可视化界面：
+
+```bash
+# 既有 workspace，显式选择锚点并接受预选成员
+openissue init --anchor ../demo-spec --yes --skills agents --json
+
+# 全新项目
+openissue init --new --name "Demo Product" --yes --skills agents --json
+
+# 单仓原地初始化
+openissue init --id demo --name "Demo Product" --yes --json
+
+# 修复失效指针
+openissue init --rescan --json
+```
+
+缺少多锚点选择、成员确认或 OpenSpec 选择时，`--json` 会返回结构化错误而不是提问。失败时 stdout 输出统一外壳：
+
+```json
+{
+  "mode": "unknown",
+  "status": "failed",
+  "error": { "code": "ANCHOR_SELECTION_REQUIRED", "message": "..." },
+  "phases": [],
+  "created": [],
+  "next": ["openissue init --anchor <path> --zh --json"],
+  "language": "zh",
+  "language_source": "system"
+}
+```
+
+Agent 用 `error.code` 判断失败类型，用 `next` 继续；部分失败使用 `status: "partial"`，并保留已创建内容。键名、错误码与 `next` 命令不翻译；`message` 与 `warnings` 跟随所选语言。
+
 ### 2. 登记成员仓库
 
 初始化既有 workspace 时会列出直接子 Git 仓：store 指针匹配锚点的仓预选，其他仓可选，已归属其他产品的仓标记冲突且默认不选。确认后成员仓库获得 `openissue-project.yaml`，锚点 `product.yaml` 记录成员。

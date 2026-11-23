@@ -368,6 +368,7 @@ describe('init integration', () => {
     const withSkills = await createSingleRepo('openissue-init-skills-');
     const installed = await run(withSkills, [
       'init',
+      '--zh',
       '--id',
       'demo',
       '--name',
@@ -382,7 +383,7 @@ describe('init integration', () => {
     ).toBe(true);
 
     const defaults = await createSingleRepo('openissue-init-default-');
-    const plain = await run(defaults, ['init', '--id', 'demo', '--name', 'Demo']);
+    const plain = await run(defaults, ['init', '--zh', '--id', 'demo', '--name', 'Demo']);
     expect(plain.status, plain.stderr).toBe(0);
     expect(
       await exists(path.join(defaults.root, '.agents', 'skills', 'openissue-capture', 'SKILL.md')),
@@ -391,6 +392,7 @@ describe('init integration', () => {
     const skipped = await createSingleRepo('openissue-init-skip-');
     const none = await run(skipped, [
       'init',
+      '--zh',
       '--id',
       'demo',
       '--name',
@@ -402,7 +404,7 @@ describe('init integration', () => {
     expect(await exists(path.join(skipped.root, '.agents'))).toBe(false);
 
     const bare = await createSingleRepo('openissue-init-bare-');
-    const bareResult = await run(bare, ['init', '--id', 'demo', '--name', 'Demo', '--skills']);
+    const bareResult = await run(bare, ['init', '--zh', '--id', 'demo', '--name', 'Demo', '--skills']);
     expect(bareResult.status, bareResult.stderr).toBe(0);
     expect(
       await exists(path.join(bare.root, '.agents', 'skills', 'openissue-capture', 'SKILL.md')),
@@ -412,7 +414,7 @@ describe('init integration', () => {
   it('rejects a non-agents skills target before creating the product', async () => {
     const root = await createTempDir('openissue-init-invalid-');
     cleanup.push(root);
-    const result = await run(root, ['init', '--id', 'demo', '--skills', 'unknown-tool']);
+    const result = await run(root, ['init', '--zh', '--id', 'demo', '--skills', 'unknown-tool']);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('openissue skills install --tool unknown-tool');
     expect(await exists(path.join(root.root, 'openissue', 'product.yaml'))).toBe(false);

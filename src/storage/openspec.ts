@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import YAML from 'yaml';
 import { isRecord } from '../core/guards.js';
+import type { Language } from '../core/language.js';
 
 export interface OpenspecInitResult {
   status: 'success' | 'unavailable' | 'failed';
@@ -57,10 +58,18 @@ export async function readAnchorStoreIds(
 export function runOpenspecInit(
   root: string,
   tools: 'agents' | 'none',
+  language: Language,
   force = false,
 ): OpenspecInitResult {
   const bin = process.platform === 'win32' ? 'openspec.cmd' : 'openspec';
-  const args = ['init', '--tools', tools, '--language', 'zh-CN', '--no-animation'];
+  const args = [
+    'init',
+    '--tools',
+    tools,
+    '--language',
+    language === 'zh' ? 'zh-CN' : 'en',
+    '--no-animation',
+  ];
   if (force) args.push('--force');
   const result = spawnSync(bin, args, {
     cwd: root,

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { OpenIssueError } from '../core/errors.js';
 import { slugifyTitle } from '../core/id.js';
+import type { Language, LanguageSource } from '../core/language.js';
 import { toPosix } from '../core/paths.js';
 import type { ProductManifest } from '../core/types.js';
 import type { SkillTool } from '../skills/catalog.js';
@@ -90,6 +91,10 @@ export interface InitReport {
   phases: InitPhase[];
   warnings: string[];
   next: string[];
+  language: Language;
+  language_source: LanguageSource | undefined;
+  created: string[];
+  error: { code: string; message: string } | undefined;
 }
 
 export interface InitOptions {
@@ -105,9 +110,12 @@ export interface InitOptions {
   openspec: boolean | undefined;
   rescan: boolean | undefined;
   force: boolean | undefined;
+  language: Language;
+  languageSource?: LanguageSource;
+  interactive: boolean;
 }
 
-interface AnchorCandidate {
+export interface AnchorCandidate {
   root: string;
   kind: 'openissue' | 'openspec';
   product: ProductManifest | undefined;
@@ -115,7 +123,7 @@ interface AnchorCandidate {
   storeIds: string[];
 }
 
-interface MemberCandidate {
+export interface MemberCandidate {
   root: string;
   id: string;
   status: 'candidate' | 'existing' | 'conflict' | 'invalid';
@@ -123,7 +131,7 @@ interface MemberCandidate {
   reason: string | undefined;
 }
 
-interface ScanResult {
+export interface ScanResult {
   anchors: AnchorCandidate[];
   excluded: Array<{ path: string; store: string }>;
   directGitRepos: string[];
@@ -157,7 +165,7 @@ export async function runInit(options: InitOptions): Promise<InitReport> {
 
   if (pointer && !options.rescan && !options.anchorPath) {
     try {
-      const report = emptyReport(cwd, 'workspace-reuse');
+      const report = emptyReport(cwd, 'workspace-reuse', options.language);
       return await reuseWorkspace(cwd, pointer, options, report);
     } catch (error) {
       if (!options.rescan && !options.anchorPath) throw error;
@@ -178,7 +186,7 @@ export async function runInit(options: InitOptions): Promise<InitReport> {
   }
 
   const scan = await scanWorkspace(cwd);
-  const report = emptyReport(cwd, 'workspace');
+  const report = emptyReport(cwd, 'workspace', options.language);
   report.candidates = {
     anchors: scan.anchors.map((candidate) => ({
       path: candidate.root,
@@ -263,7 +271,7 @@ async function initSingleRepo(
   root: string,
   options: InitOptions,
 ): Promise<InitReport> {
-  const report = emptyReport(root, 'single-repo');
+  const report = emptyReport(root, 'single-repo', options.language);
   const identity = resolveExistingAnchorIdentity(root, options);
   const shouldInit = await shouldInitializeOpenspec(root, options, 'single-repo');
   const product = await ensureProduct(root, identity, report);
@@ -463,7 +471,12 @@ async function initNewProject(
     'spec 仓 README',
   );
 
-  await initializeOpenspec(specRoot, workspaceRoot, options, report);
+  if (options.openspec === false) {
+    phase(report, 'openspec', 'OpenSpec 初始化', 'skipped', '用户选择暂不初始化');
+    report.warnings.push('OpenSpec 尚未初始化；可稍后在 spec 仓运行 openspec init。');
+  } else {
+    await initializeOpenspec(specRoot, workspaceRoot, options, report);
+  }
   await ensureSpecAgents(specRoot, product, options, report);
   await ensureGeneratedFile(
     path.join(codeRoot, 'README.md'),
@@ -531,7 +544,7 @@ async function initNewProject(
   return finalize(report);
 }
 
-async function scanWorkspace(workspaceRoot: string): Promise<ScanResult> {
+export async function scanWorkspace(workspaceRoot: string): Promise<ScanResult> {
   const anchors: AnchorCandidate[] = [];
   const excluded: Array<{ path: string; store: string }> = [];
   const roots = [workspaceRoot];
@@ -581,7 +594,7 @@ async function scanWorkspace(workspaceRoot: string): Promise<ScanResult> {
   };
 }
 
-async function scanDirectChildGitRepos(workspaceRoot: string): Promise<string[]> {
+export async function scanDirectChildGitRepos(workspaceRoot: string): Promise<string[]> {
   const entries = await readdir(workspaceRoot, { withFileTypes: true });
   const repos: string[] = [];
   for (const entry of entries) {
@@ -594,7 +607,7 @@ async function scanDirectChildGitRepos(workspaceRoot: string): Promise<string[]>
   return repos.sort((left, right) => left.localeCompare(right));
 }
 
-async function buildMemberCandidates(
+export async function buildMemberCandidates(
   workspaceRoot: string,
   anchorRoot: string,
   directGitRepos: string[],
@@ -703,7 +716,7 @@ async function selectAnchor(
       'ANCHOR_SELECTION_REQUIRED',
     );
   }
-  if (!process.stdin.isTTY) {
+  if (!options.interactive || !process.stdin.isTTY) {
     throw new OpenIssueError(
       `发现多个锚点候选：${candidates
         .map((candidate) => toPosix(path.relative(workspaceRoot, candidate.root)))
@@ -758,7 +771,7 @@ async function selectMembers(
   }
 
   if (candidates.length === 0) return [];
-  if (!process.stdin.isTTY) {
+  if (!options.interactive || !process.stdin.isTTY) {
     throw new OpenIssueError(
       `发现成员候选：${candidates
         .map((candidate) => toPosix(path.relative(workspaceRoot, candidate.root)))
@@ -853,7 +866,7 @@ async function shouldInitializeOpenspec(
   if (options.openspec === false) return false;
   if (options.openspec === true) return true;
   if (options.yes) return true;
-  if (!process.stdin.isTTY) {
+  if (!options.interactive || !process.stdin.isTTY) {
     throw new OpenIssueError(
       `当前${mode === 'single-repo' ? ' Git 仓' : '锚点仓库'}尚未初始化 OpenSpec。请加 --openspec 初始化，或加 --no-openspec 跳过。`,
       'OPENSPEC_CONFIRMATION_REQUIRED',
@@ -869,7 +882,12 @@ async function initializeOpenspec(
   report: InitReport,
 ): Promise<boolean> {
   const tools = options.skills.length > 0 ? 'agents' : 'none';
-  const result = runOpenspecInit(anchorRoot, tools, options.force === true);
+  const result = runOpenspecInit(
+    anchorRoot,
+    tools,
+    options.language,
+    options.force === true,
+  );
   if (result.status === 'success') {
     phase(report, 'openspec', 'OpenSpec 初始化', 'success', anchorRoot);
     if (
@@ -1090,7 +1108,7 @@ async function resolveMemberRoots(
 
 async function confirm(message: string, options: InitOptions): Promise<boolean> {
   if (options.yes) return true;
-  if (!process.stdin.isTTY) {
+  if (!options.interactive || !process.stdin.isTTY) {
     throw new OpenIssueError(`需要确认：${message} 请追加 --yes。`, 'CONFIRMATION_REQUIRED');
   }
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -1165,7 +1183,7 @@ async function promptMembers(
 
 async function resolveProjectName(options: InitOptions): Promise<string> {
   if (options.name?.trim()) return options.name.trim();
-  if (!process.stdin.isTTY) {
+  if (!options.interactive || !process.stdin.isTTY) {
     throw new OpenIssueError(
       '全新项目需要英文项目名。请追加 --name <name>。',
       'PROJECT_NAME_REQUIRED',
@@ -1179,7 +1197,7 @@ async function resolveProjectName(options: InitOptions): Promise<string> {
   }
 }
 
-function normalizeProjectName(input: string): string {
+export function normalizeProjectName(input: string): string {
   const name = input.trim();
   if (!name || !/^[A-Za-z0-9][A-Za-z0-9 _-]*$/.test(name)) {
     throw new OpenIssueError(
@@ -1194,7 +1212,7 @@ function normalizeProjectName(input: string): string {
   return id;
 }
 
-function resolveExistingAnchorIdentity(
+export function resolveExistingAnchorIdentity(
   root: string,
   options: InitOptions,
 ): { id: string; name: string } {
@@ -1203,7 +1221,7 @@ function resolveExistingAnchorIdentity(
   return { id, name: options.name?.trim() || id };
 }
 
-function fallbackProductId(anchorRoot: string, requested: string | undefined): string {
+export function fallbackProductId(anchorRoot: string, requested: string | undefined): string {
   const id = requested?.trim() || slugifyTitle(path.basename(anchorRoot)) || 'openissue-product';
   validateProductId(id);
   return id;
@@ -1258,7 +1276,11 @@ async function ordinaryWorkspaceEntries(root: string): Promise<string[]> {
   return entries.filter((entry) => !allowed.has(entry)).sort((left, right) => left.localeCompare(right));
 }
 
-function emptyReport(workspaceRoot: string, mode: InitMode): InitReport {
+function emptyReport(
+  workspaceRoot: string,
+  mode: InitMode,
+  language: Language,
+): InitReport {
   return {
     mode,
     status: 'success',
@@ -1273,6 +1295,10 @@ function emptyReport(workspaceRoot: string, mode: InitMode): InitReport {
     phases: [],
     warnings: [],
     next: [],
+    language,
+    language_source: undefined,
+    created: [],
+    error: undefined,
   };
 }
 
@@ -1291,6 +1317,22 @@ function phase(
 function finalize(report: InitReport): InitReport {
   const failed = report.phases.some((item) => item.status === 'failed');
   report.status = failed ? 'partial' : 'success';
+  report.created = [
+    report.anchor_root,
+    report.code_root,
+    report.spec_root,
+    report.pointer?.path,
+  ].filter((item): item is string => typeof item === 'string' && item.length > 0);
+  if (failed) {
+    const first = report.phases.find((item) => item.status === 'failed');
+    report.error = {
+      code: 'INIT_PARTIAL',
+      message:
+        report.language === 'en'
+          ? 'Initialization partially failed.'
+          : first?.message ?? first?.label ?? 'Initialization partially failed.',
+    };
+  }
   return report;
 }
 

@@ -38,6 +38,8 @@ interface InitReport {
   phases: Array<{ id: string; status: string; message?: string }>;
   warnings: string[];
   next: string[];
+  created: string[];
+  error?: { code: string; message: string };
 }
 
 function cliEnv(root: TempDir, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -53,12 +55,23 @@ async function initAt(
   args: string[],
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<{ status: number | null; stdout: string; stderr: string }> {
-  return runCli(['init', ...args], { cwd: root.root, env: cliEnv(root, extraEnv) });
+  return runCli(['init', '--zh', ...args], { cwd: root.root, env: cliEnv(root, extraEnv) });
 }
 
 function parseReport(result: { stdout: string }): InitReport {
   const start = result.stdout.indexOf('{');
   return JSON.parse(result.stdout.slice(start)) as InitReport;
+}
+
+function parseError(result: { stdout: string }): {
+  status: string;
+  error: { code: string; message: string };
+} {
+  const start = result.stdout.indexOf('{');
+  return JSON.parse(result.stdout.slice(start)) as {
+    status: string;
+    error: { code: string; message: string };
+  };
 }
 
 async function exists(file: string): Promise<boolean> {
@@ -481,7 +494,7 @@ describe('anchor discovery and single-repo classification', () => {
     const nested = path.join(repo.root, 'src', 'nested');
     await mkdir(nested, { recursive: true });
 
-    const result = runCli(['init', '--id', 'demo', '--skills', 'none'], {
+    const result = runCli(['init', '--zh', '--id', 'demo', '--skills', 'none'], {
       cwd: nested,
       env: cliEnv(repo),
     });
@@ -703,15 +716,16 @@ describe('new project scaffold', () => {
     cleanup.push(chinese);
     const rejected = await newProject(chinese, '中文项目');
     expect(rejected.status).not.toBe(0);
-    expect(rejected.stderr).toContain('英文');
-    expect(await readdir(chinese.root)).toEqual([]);
+    expect(parseError(rejected).error.code).toBe('INVALID_PROJECT_NAME');
+    expect(parseError(rejected).error.message).toContain('英文');
+    expect(await readdir(chinese.root)).toEqual(['.home']);
 
     const conflict = await createTempDir('openissue-new-');
     cleanup.push(conflict);
     await mkdir(path.join(conflict.root, 'demo'));
     const blocked = await newProject(conflict, 'Demo');
     expect(blocked.status).not.toBe(0);
-    expect(blocked.stderr).toContain('已存在');
+    expect(parseError(blocked).error.code).toBe('INIT_DIRECTORY_CONFLICT');
     expect(await exists(path.join(conflict.root, 'demo-spec'))).toBe(false);
   });
 
@@ -830,7 +844,8 @@ describe('OpenSpec, skills, and AGENTS entry points', () => {
     cleanup.push(rejected);
     const result = await newProject(rejected, ['--skills', 'claude']);
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('openissue skills install --tool claude');
+    expect(parseError(result).error.code).toBe('INIT_SKILLS_TARGET');
+    expect(parseError(result).error.message).toContain('openissue skills install --tool');
     expect(await exists(path.join(rejected.root, 'demo'))).toBe(false);
   });
 
@@ -970,6 +985,9 @@ describe('failure recovery and idempotence', () => {
     expect(result.status).not.toBe(0);
     const report = parseReport(result);
     expect(report.phases.find((phase) => phase.id === 'git')?.status).toBe('failed');
+    expect(report.status).toBe('partial');
+    expect(report.error?.code).toBe('INIT_PARTIAL');
+    expect(report.created.length).toBeGreaterThan(0);
     expect(await exists(path.join(workspace.root, 'demo', 'README.md'))).toBe(true);
     expect(await exists(path.join(workspace.root, 'demo-spec', 'openissue', 'product.yaml'))).toBe(
       true,
