@@ -26,6 +26,39 @@ pnpm link --global
 openissue --version
 ```
 
+### 本地全局安装与更新（npm）
+
+`pnpm link --global` 适合临时开发。需要安装一个与 npm 发布包一致、能稳定执行的全局副本时，从仓库根目录构建并用 npm 复制安装：
+
+```bash
+pnpm install
+pnpm build
+npm uninstall -g openissue
+npm install -g --install-links . --offline
+openissue --version
+```
+
+一条命令完成安装
+```bash
+pnpm build && npm uninstall -g openissue && npm install -g --install-links . --offline
+```
+
+源码变更后更新全局副本：
+
+```bash
+pnpm build
+npm uninstall -g openissue
+npm install -g --install-links . --offline
+openissue init --help
+```
+
+说明：
+
+- `--install-links` 把本地包复制到全局目录，不创建符号链接；避免 npm 全局 shim 通过符号链接执行时出现入口判断问题。
+- `--offline` 只使用本地依赖缓存。若安装失败，先运行 `pnpm install`，必要时去掉 `--offline` 让 npm 解析依赖。
+- 这是从当前工作树安装，不发布到 npm registry。
+- 全局包只包含 `dist` 与 `skills`；源码变更后必须先 `pnpm build`，否则全局命令仍运行旧构建。
+
 端到端验证：
 
 ```bash

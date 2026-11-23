@@ -100,6 +100,7 @@ Single-repo init uses the current repo as anchor with no workspace pointer or ro
 | --------------------- | ---------------------------------------------------------------------------- |
 | Install               | `pnpm install`                                                               |
 | Build (tsc → `dist/`) | `pnpm build`                                                                 |
+| Global local install/update | `pnpm build && npm uninstall -g openissue && npm install -g --install-links . --offline` |
 | Type check only       | `pnpm typecheck`                                                             |
 | Dev CLI (no build)    | `pnpm dev -- --help`                                                         |
 | Run built CLI         | `node dist/cli.js --version`                                                 |
