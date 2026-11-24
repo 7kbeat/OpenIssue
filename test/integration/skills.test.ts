@@ -74,15 +74,25 @@ describe('bundled skills', () => {
     expect(output.tools.some((tool) => tool.id === 'codex' && tool.aliasOf === 'agents')).toBe(true);
 
     const capture = await readFile(path.resolve('skills', 'openissue-capture', 'SKILL.md'), 'utf8');
+    expect(capture).toContain('Stage 1 of 4');
     expect(capture).toContain('openissue create');
-    expect(capture).toContain('不要在本流程中实现');
+    expect(capture).toContain('openissue edit');
+    expect(capture).toContain('Do NOT implement code');
+    const triage = await readFile(path.resolve('skills', 'openissue-triage', 'SKILL.md'), 'utf8');
+    expect(triage).toContain('Stage 2 of 4');
+    expect(triage).toContain('openissue priority --json');
+    expect(triage).toContain('openissue prioritize --emit');
+    expect(triage).toContain('openissue prioritize --apply');
+    expect(triage).toContain('openissue depend');
     const handoff = await readFile(path.resolve('skills', 'openissue-handoff', 'SKILL.md'), 'utf8');
+    expect(handoff).toContain('Stage 4 of 4');
     expect(handoff).toContain('openissue handoff');
     expect(handoff).toContain('openissue confirm');
-    expect(handoff).toContain('不伪造 OpenSpec');
+    expect(handoff).toContain('Do NOT forge OpenSpec artifacts or state');
     expect(handoff).not.toContain('openissue handoff <id> --change');
 
     const grill = await readFile(path.resolve('skills', 'openissue-grill-me', 'SKILL.md'), 'utf8');
+    expect(grill).toContain('Stage 3 of 4');
     expect(grill).toContain('OpenIssue Grill-Me: User-Centered Product Decision Interview');
     expect(grill).toContain('## 1. Core Principles');
     expect(grill).toContain('### 1.2 Separate verified facts from assumptions');

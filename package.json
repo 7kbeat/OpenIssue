@@ -15,7 +15,9 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "tsx src/cli.ts",
+    "dev": "tsx src/web.ts",
+    "start": "node dist/web.js",
+    "cli": "tsx src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
