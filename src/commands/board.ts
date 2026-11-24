@@ -31,10 +31,12 @@ export function registerBoardCommand(program: Command): void {
           port,
         });
       } catch (error) {
-        throw new OpenIssueError(
-          `看板启动失败：${errorMessage(error)}`,
-          'BOARD_START_FAILED',
-        );
+        const code = (error as NodeJS.ErrnoException).code;
+        const detail =
+          code === 'EADDRINUSE'
+            ? `端口 ${port} 已被占用（127.0.0.1:${port}）。请换一个端口，例如 openissue board --port 4311；或使用 --port 0 自动选择空闲端口。`
+            : errorMessage(error);
+        throw new OpenIssueError(`看板启动失败：${detail}`, 'BOARD_START_FAILED');
       }
       console.log(`看板已启动：${board.url}`);
       console.log('仅绑定 127.0.0.1；按 Ctrl+C 停止。');

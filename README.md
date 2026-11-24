@@ -516,11 +516,28 @@ openissue confirm OI-20261120-ABCD
 
 只有用户确认才会关闭为“已完成”；系统不会自动关闭。部分归档、已关闭需求或关联失效时不会出现完成提示。
 
-### 11. 本地看板
+### 11. 启动 Web 看板
+
+在 workspace 根或锚点仓运行：
 
 ```bash
 openissue board
-openissue board --port 4310 --no-open
+```
+
+默认启动在 `http://127.0.0.1:4310/`，并自动打开浏览器。终端会显示实际访问地址，按 `Ctrl+C` 停止：
+
+```text
+看板已启动：http://127.0.0.1:4310/
+仅绑定 127.0.0.1；按 Ctrl+C 停止。
+```
+
+常用选项：
+
+```bash
+openissue board --port 4311       # 换端口
+openissue board --no-open         # 不自动打开浏览器
+openissue board --port 4311 --no-open
+openissue board --port 0           # 当端口被占用时,可使用port 0 由系统自动选择空闲端口
 ```
 
 看板只绑定 `127.0.0.1`，与命令行读写同一份数据。可以：
@@ -605,7 +622,7 @@ OpenIssue 不会自动修复或丢弃无法解析的记录。
 需求已关联一个访谈草稿，但尚未生成 tasks。运行 `openissue start <id>` 继续同一草稿；需要放弃时使用 `--discard <change-id> --yes`，执行前会要求二次确认。
 
 **看板端口被占用**  
-换一个端口：`openissue board --port 4311`。启动失败不会影响命令行。
+默认端口 `4310` 已被其他程序占用时，换一个端口：`openissue board --port 4311`；或让系统自动选择空闲端口：`openissue board --port 0`，终端会显示实际地址。启动失败不会影响命令行。
 
 **中文标题无法生成变更标识**  
 OpenSpec 1.10 只接受小写字母、数字与连字符。OpenIssue 会回退到需求标识；可用 `--change <id>` 指定自定义标识。

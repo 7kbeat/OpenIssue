@@ -181,6 +181,9 @@ describe('local board', () => {
     );
     expect(blocked.status).not.toBe(0);
     expect(blocked.stderr).toContain('看板启动失败');
+    expect(blocked.stderr).toContain('已被占用');
+    expect(blocked.stderr).toContain('--port 4311');
+    expect(blocked.stderr).toContain('--port 0');
     const cli = runCli(['list', '--json'], { cwd: anchor.root, env: env(anchor) });
     expect(cli.status, cli.stderr).toBe(0);
     expect(cli.stdout).toContain('OI-20260101-AAAA');
