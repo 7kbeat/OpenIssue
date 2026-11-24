@@ -1,8 +1,14 @@
 # OpenIssue
 
-Git 原生的需求收件箱，面向产品工程师。它接住那些“值得做、现在做不了、也还写不出 spec”的想法；等想法成熟后，再交给 OpenSpec。
+Git 原生的需求收件箱，面向产品开发工程师（或者 产品经理）。它接住那些“值得做、现在做不了、也还写不出 spec”的想法；等想法成熟后，再交给 OpenSpec。
 
 需求只保存一份：在产品锚点仓库的 `openissue/issues/` 中。成员代码仓库只保存 `openissue-project.yaml` 指针，不保存副本。GitHub Issues 不在实现范围。
+
+## 什么时候你需要它
+
+- 将多个 repo 定义为一个产品矩阵，多个 repo 之间存在依赖关系；
+- 产品矩阵中，每个 repo 都有多个需求，需求之间存在优先级、依赖关系、实现状态等；
+- 一个issue可能存在需要同时更改多个 repo 情况。
 
 ## 环境
 
@@ -634,15 +640,6 @@ OpenSpec 1.10 只接受小写字母、数字与连字符。OpenIssue 会回退�
 - 已有有效 workspace 指针时再次运行 `openissue init` 会复用锚点，不重新扫描或改写指针。
 - 新项目中途失败后，用相同的 `--new --name "<名称>" --yes` 重试；已有效的目录、产品、成员与 skills 不会重复创建。
 - 失败项会给出重试命令。OpenSpec/Git 修复后可以只补对应步骤；不要为了重试删除仍包含需求数据的锚点。
-
-OpenSpec 变更归档顺序依赖：
-
-1. `establish-openissue-v1`
-2. `add-openissue-skills`
-3. `adopt-grill-me-entry`
-4. `add-workspace-init`
-
-依赖变更未归档前可以验证与实现，但不能归档当前变更；否则 `MODIFIED/REMOVED` 目标不存在。
 
 ## 设计边界
 
