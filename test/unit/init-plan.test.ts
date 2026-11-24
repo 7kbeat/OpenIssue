@@ -97,6 +97,30 @@ describe('init plan', () => {
     expect(plan.mode_reason).toContain('Anchor found');
   });
 
+  it('does not emit child-process deprecation warnings while planning', async () => {
+    const workspace = await createTempDir('openissue-plan-warning-');
+    cleanup.push(workspace);
+    await anchor(path.join(workspace.root, 'spec'));
+
+    const warnings: Error[] = [];
+    const onWarning = (warning: Error): void => {
+      warnings.push(warning);
+    };
+    process.on('warning', onWarning);
+    try {
+      await buildInitPlan(options(workspace.root));
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setImmediate(resolve);
+      await promise;
+    } finally {
+      process.off('warning', onWarning);
+    }
+
+    expect(
+      warnings.some((warning) => (warning as NodeJS.ErrnoException).code === 'DEP0190'),
+    ).toBe(false);
+  });
+
   it('reports a blocked workspace with ordinary content', async () => {
     const workspace = await createTempDir('openissue-plan-blocked-');
     cleanup.push(workspace);

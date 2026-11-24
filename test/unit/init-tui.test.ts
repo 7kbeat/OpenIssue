@@ -41,6 +41,12 @@ function streams(): { input: NodeJS.ReadStream; output: NodeJS.WriteStream; text
   return { input, output, text: () => text };
 }
 
+async function nextImmediate(): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setImmediate(resolve);
+  await promise;
+}
+
 function stepDriver(io: { onStep?: (step: TuiStep) => void }): {
   next: () => Promise<TuiStep>;
   pending: TuiStep[];
@@ -200,6 +206,59 @@ describe('init TUI primitives', () => {
       expect(result.report.anchor_root).toBe(path.join(workspace.root, 'spec'));
     }
   });
+
+  it(
+    'continues past the environment step after selecting one of multiple anchors',
+    { timeout: 5000 },
+    async () => {
+      const workspace = await createTempDir('openissue-tui-anchors-');
+      const home = await createTempDir('openissue-tui-home-');
+      cleanup.push(workspace, home);
+      process.env.OPENISSUE_HOME = home.root;
+      const anchors = ['one', 'two'].map((name) => path.join(workspace.root, name));
+      for (const root of anchors) {
+        await mkdir(path.join(root, 'openissue', 'issues'), { recursive: true });
+        await writeFile(
+          path.join(root, 'openissue', 'product.yaml'),
+          `id: ${path.basename(root)}\nname: ${path.basename(root)}\nfocus: ""\nfocus_updated_at: null\nmembers: []\n`,
+          'utf8',
+        );
+        await createOpenspecSkeleton(root);
+      }
+
+      const io = streams();
+      const options: InitOptions = {
+        cwd: workspace.root,
+        id: undefined,
+        name: undefined,
+        anchorPath: undefined,
+        skills: [],
+        newProject: undefined,
+        yes: undefined,
+        memberPaths: [],
+        skipMembers: true,
+        openspec: false,
+        rescan: undefined,
+        force: undefined,
+        language: 'en',
+        languageSource: 'flag',
+        interactive: true,
+      };
+      const driver = stepDriver(io);
+      const promise = runInitTui(options, io);
+      expect(await driver.next()).toBe('environment');
+      io.input.emit('keypress', '', { name: 'return' });
+      await nextImmediate();
+      io.input.emit('keypress', '', { name: 'return' });
+      expect(await driver.next()).toBe('environment');
+      io.input.emit('keypress', '', { name: 'return' });
+      expect(await driver.next()).toBe('product');
+      io.input.emit('keypress', '', { name: 'q' });
+      const result = await promise;
+      expect(result.kind).toBe('cancelled');
+      expect(anchors).toContain(result.plan.anchor_root);
+    },
+  );
 
   it('enters and restores the alternate screen in TTY mode', async () => {
     const workspace = await createTempDir('openissue-tui-tty-');

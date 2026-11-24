@@ -1,5 +1,5 @@
-import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { runCommand } from '../core/command.js';
 import type { Language, LanguageSource } from '../core/language.js';
 import { toPosix } from '../core/paths.js';
 import { statusSkills } from '../skills/install.js';
@@ -557,10 +557,7 @@ async function openspecPlan(
 
 function openspecCliAvailable(): boolean {
   const bin = process.platform === 'win32' ? 'openspec.cmd' : 'openspec';
-  const result = spawnSync(bin, ['--version'], {
-    encoding: 'utf8',
-    shell: process.platform === 'win32',
-  });
+  const result = runCommand(bin, ['--version']);
   return !result.error && result.status === 0;
 }
 

@@ -273,13 +273,18 @@ async function initSingleRepo(
 ): Promise<InitReport> {
   const report = emptyReport(root, 'single-repo', options.language);
   const identity = resolveExistingAnchorIdentity(root, options);
-  const shouldInit = await shouldInitializeOpenspec(root, options, 'single-repo');
+  const openspecReady = await hasCompleteOpenspecData(root);
+  const shouldInit = openspecReady
+    ? false
+    : await shouldInitializeOpenspec(root, options, 'single-repo');
   const product = await ensureProduct(root, identity, report);
   report.anchor_root = root;
   report.product = { id: product.id, name: product.name };
   await registerProduct(product, root, report);
 
-  if (shouldInit) {
+  if (openspecReady) {
+    phase(report, 'openspec', 'OpenSpec 检查', 'skipped', '当前仓已包含 OpenSpec');
+  } else if (shouldInit) {
     await initializeOpenspec(root, root, options, report);
   } else {
     phase(report, 'openspec', 'OpenSpec 初始化', 'skipped', '用户选择暂不初始化');
@@ -339,7 +344,10 @@ async function initWorkspace(
   };
 
   const selected = await selectMembers(workspaceRoot, candidates, options);
-  const shouldInit = await shouldInitializeOpenspec(anchor.root, options, 'workspace');
+  const openspecReady = await hasCompleteOpenspecData(anchor.root);
+  const shouldInit = openspecReady
+    ? false
+    : await shouldInitializeOpenspec(anchor.root, options, 'workspace');
 
   const product = await ensureProduct(
     anchor.root,
@@ -384,7 +392,9 @@ async function initWorkspace(
     }
   }
 
-  if (shouldInit) {
+  if (openspecReady) {
+    phase(report, 'openspec', 'OpenSpec 检查', 'skipped', '锚点已包含 OpenSpec');
+  } else if (shouldInit) {
     await initializeOpenspec(anchor.root, workspaceRoot, options, report);
   } else {
     phase(report, 'openspec', 'OpenSpec 初始化', 'skipped', '用户选择暂不初始化');

@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
+import { runCommand } from '../../src/core/command.js';
 
 export interface TempDir {
   root: string;
@@ -73,16 +74,7 @@ export function runOpenspec(
   args: string[] = ['list'],
 ): { status: number | null; stdout: string; stderr: string } {
   const bin = process.platform === 'win32' ? 'openspec.cmd' : 'openspec';
-  const result = spawnSync(bin, args, {
-    cwd,
-    encoding: 'utf8',
-    shell: process.platform === 'win32',
-  });
-  return {
-    status: result.status,
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-  };
+  return runCommand(bin, args, { cwd });
 }
 
 export function runGit(cwd: string, args: string[]): string {

@@ -598,7 +598,7 @@ async function environmentStep(
     };
   }
 
-  if (plan.requires_anchor_selection || plan.anchors.length > 1) {
+  if (plan.requires_anchor_selection) {
     const choice = await runChoice({
       title: t(options.language, '选择锚点', 'Choose anchor'),
       step: t(options.language, '步骤 1/6', 'Step 1/6'),

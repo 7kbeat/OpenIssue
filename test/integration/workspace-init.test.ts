@@ -818,6 +818,32 @@ describe('OpenSpec, skills, and AGENTS entry points', () => {
     expect(status.tools[0]!.skills.every((skill) => skill.state === 'current')).toBe(true);
   });
 
+  it('does not warn when the anchor already has OpenSpec and installs shared skills', async () => {
+    const workspace = await createTempDir('openissue-ws-ready-');
+    cleanup.push(workspace);
+    const spec = path.join(workspace.root, 'spec');
+    await writeAnchor(spec);
+
+    const result = await initAt(workspace, [
+      '--anchor',
+      'spec',
+      '--yes',
+      '--skills',
+      'agents',
+      '--json',
+    ]);
+    expect(result.status, result.stderr).toBe(0);
+    const report = parseReport(result);
+    expect(report.warnings.join('\n')).not.toContain('OpenSpec 尚未初始化');
+    expect(report.phases.find((phase) => phase.id === 'openspec')).toMatchObject({
+      status: 'skipped',
+      message: '锚点已包含 OpenSpec',
+    });
+    expect(
+      await exists(path.join(workspace.root, '.agents', 'skills', 'openissue-grill-me', 'SKILL.md')),
+    ).toBe(true);
+  });
+
   it('preserves manual root AGENTS content and appends one managed section', async () => {
     const workspace = await createTempDir('openissue-new-');
     cleanup.push(workspace);

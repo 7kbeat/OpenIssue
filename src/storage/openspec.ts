@@ -1,7 +1,7 @@
-import { spawnSync } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import YAML from 'yaml';
+import { runCommand } from '../core/command.js';
 import { isRecord } from '../core/guards.js';
 import type { Language } from '../core/language.js';
 
@@ -71,11 +71,9 @@ export function runOpenspecInit(
     '--no-animation',
   ];
   if (force) args.push('--force');
-  const result = spawnSync(bin, args, {
+  const result = runCommand(bin, args, {
     cwd: root,
-    encoding: 'utf8',
     env: process.env,
-    shell: process.platform === 'win32',
   });
   if (result.error) {
     const code = (result.error as NodeJS.ErrnoException).code;
