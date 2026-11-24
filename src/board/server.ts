@@ -46,6 +46,7 @@ export interface BoardDeps {
 export interface StartBoardOptions {
   context: BoardContext;
   port?: number;
+  host?: string;
   deps?: BoardDeps;
 }
 
@@ -63,18 +64,20 @@ export async function startBoard(options: StartBoardOptions): Promise<BoardServe
     });
   });
   const port = options.port ?? 4310;
+  const host = options.host ?? '127.0.0.1';
   const listening = Promise.withResolvers<void>();
   const onError = (error: Error) => listening.reject(error);
   server.once('error', onError);
-  server.listen(port, '127.0.0.1', () => {
+  server.listen(port, host, () => {
     server.off('error', onError);
     listening.resolve();
   });
   await listening.promise;
   const address = server.address() as AddressInfo;
+  const displayHost = host === '0.0.0.0' ? '127.0.0.1' : host;
   return {
     server,
-    url: `http://127.0.0.1:${address.port}/`,
+    url: `http://${displayHost}:${address.port}/`,
     close: () => {
       const closing = Promise.withResolvers<void>();
       server.close((error) => (error ? closing.reject(error) : closing.resolve()));

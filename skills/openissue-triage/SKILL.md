@@ -1,66 +1,109 @@
 ---
 name: openissue-triage
-description: 审阅 OpenIssue 收件箱，按项目事实、依赖与手动覆盖调整档位、顺序、依赖和状态。用于优先级评审与关闭决策。
+description: Review the OpenIssue inbox, explain priority evaluations, run assistant-assisted prioritization (--emit/--apply), manage dependencies and focus, and handle explicit close/reopen decisions.
 allowed-tools: Bash(openissue:*)
 license: MIT
 compatibility: Requires openissue CLI.
 metadata:
   author: openissue
-  version: "1.0"
+  version: "1.1"
 ---
 
 # OpenIssue Triage
 
-审阅打开的需求，解释当前优先级，并在有证据时做最小调整。不要按创建时间猜测重要性，也不要自动关闭需求。
+**Lifecycle stage:** Triage, Prioritization & Dependency Maintenance (Stage 2 of 4: Capture → Triage → Interview & Spec → Handoff & Archive).
+
+Use this skill to review open issues, explain why each item sits in its current tier, maintain product focus and explicit blocking dependencies, run assistant-assisted prioritization, and apply explicit lifecycle transitions (`close` / `reopen`). Never guess importance from creation time and never auto-close issues.
 
 ## Read First
+
+Inspect the current evaluation and product facts before making any recommendation or change:
 
 ```bash
 openissue priority --json
 openissue show <id> --json
 ```
 
-`priority --json` 的分组包含 `high`、`medium`、`low`、`unassessed`；同时检查：
+In `priority --json`, review `focus`, `facts` (`specs`, `proposals`, `openspec_initialized`), `groups` (`high`, `medium`, `low`, `unassessed`), and `conflicts`:
 
-- `reason` 与 `basis`：结论是否有项目事实支撑；
-- `stale`：输入变化后是否待刷新；
-- `manual`、`dependency_floor`、`blocked`、`invalid_dependency`；
-- `conflicts`：无法解析的记录必须单独指出，不能被静默忽略。
+- `reason` and `basis`: Check whether the priority conclusion is backed by real project facts.
+- `stale`: True when `focus`, facts, issue content, or dependencies changed since the last judgment.
+- `manual`, `dependency_floor`, `blocked`, `invalid_dependency`: Distinguish manual overrides, dependency-lifted floors, open blockers, and broken/`wontdo` blockers.
+- `conflicts`: Any unparseable or duplicate issue file MUST be reported explicitly; never ignore or auto-repair conflicts.
+
+## Priority Evaluation Rules
+
+OpenIssue evaluates priority in a fixed deterministic order. Never bypass or invert this order:
+
+1. **Exclude closed issues** from active priority groups.
+2. **Detect invalid dependencies:** A missing blocker or a blocker closed as `wontdo` forces the downstream issue into `unassessed` (while retaining its saved `manual_tier` until the invalid dependency is removed or replaced).
+3. **Apply dependency floor propagation:** An open blocker is lifted to at least the highest effective tier among open, tiered downstream issues it blocks. Floors only lift blockers; they never lower them, and manual overrides do not suppress a dependency floor.
+4. **Apply manual override:** `manual_tier` takes precedence over cached assistant judgment.
+5. **Apply cached assistant judgment:** When valid and non-stale, use cached `tier`; otherwise leave the issue as `unassessed`.
+
+`unassessed` is an expected, healthy state—never invent reasons just to populate `high`, `medium`, or `low`.
 
 ## Allowed Adjustments
 
-只有用户明确要求或证据充分时才执行：
+Execute mutations only when requested by the user or backed by verified project evidence:
 
 ```bash
-# 设置/清空当前重点
-openissue focus "<本轮重点>"
+# Set or clear the current product focus (one concise sentence)
+openissue focus "<current product focus>"
 openissue focus --clear
 
-# 手动档位；auto 恢复自动判断
+# Set manual tier override, or restore rule/assistant evaluation with auto
 openissue tier <id> high|medium|low
 openissue tier <id> auto
 
-# 单一阻塞关系；前置已完成会解除，前置不做会使下游待评估
+# Declare or remove an explicit blocking edge (blocker blocks blocked; cycles are rejected)
 openissue depend <blocker-id> <blocked-id>
 openissue undepend <blocker-id> <blocked-id>
 
-# 关闭必须给出原因；“不做”必须说明理由
+# Close or reopen an issue (wontdo requires --note; no permanent delete exists)
+openissue close <id> --reason wontdo --note "<reason>"
 openissue close <id> --reason completed
-openissue close <id> --reason wontdo --note "<原因>"
 openissue reopen <id>
 ```
 
-## Rules
+### Lifecycle Safeguards for Closing
 
-- 默认只审阅打开需求；关闭需求只有在用户要求时才纳入。
-- 优先级顺序固定为：排除关闭项 → 识别失效依赖 → 依赖下限 → 手动覆盖 → 助手判断。不要绕过这个顺序。
-- 依赖下限只能抬高下游档位，不能降低；手动设置不会取消前置带来的下限。
-- “待评估”是正常状态，不要为了填满三档而编造依据。
-- 关闭关联活跃提案的需求不会关闭或改写提案；要向用户说明这一点。
-- 不提供永久删除；需要“暂缓”时保持打开。
-- 助手判断可选：先用 `openissue prioritize --emit` 生成请求，得到响应后用 `openissue prioritize --apply <file>` 写回；不要伪造 `tier`、`reason`、`basis` 或输入哈希。
-- 需要人工快速审阅时运行 `openissue board`，不要远程暴露看板。
+- **"Deferred" means stay `open`:** There is no permanent delete and no deferred status. Keep deferred items `open` (optionally in `low` or `unassessed`).
+- **Linked proposals:** Closing an issue does NOT cancel, modify, or archive linked OpenSpec proposals; always inform the user if `proposals` is non-empty.
+- **Completed via OpenSpec archive:** If an issue has linked OpenSpec proposals that are ready to complete after archival, route through `openissue-handoff` (`openissue confirm <id>`) rather than bypassing archive confirmation with `openissue close --reason completed`.
+
+## Assistant-Assisted Prioritization (`--emit` / `--apply`)
+
+When semantic re-evaluation of `unassessed` or `stale` issues is needed:
+
+1. Generate the canonical request payload (includes open issues, `focus`, `facts`, and per-issue `input_hash`):
+   ```bash
+   openissue prioritize --emit > priority-request.json
+   ```
+2. Evaluate only open issues against `focus`, `facts`, and `blocked_by`, returning valid JSON:
+   ```json
+   {
+     "version": 1,
+     "results": [
+       {
+         "id": "OI-YYYYMMDD-XXXX",
+         "tier": "high",
+         "reason": "Directly advances current focus and unblocks downstream work",
+         "basis": ["focus", "dependency:OI-YYYYMMDD-YYYY"],
+         "order": 0,
+         "input_hash": "<exact input_hash copied from priority-request.json>"
+       }
+     ]
+   }
+   ```
+   Allowed `basis` entries are strictly validated against the emitted request: `focus` (only when `focus` is non-empty), `spec:<spec-id>`, `proposal:<proposal-id>`, or `dependency:<blocker-id>`. Never fabricate `basis` entries or `input_hash`.
+3. Apply the validated response (per-issue errors are isolated; stale `input_hash` entries are rejected and require re-emitting):
+   ```bash
+   openissue prioritize --apply priority-response.json
+   ```
+
+For visual human review, suggest running `openissue board` locally (`127.0.0.1` only). When an issue is mature and ready to enter OpenSpec planning, hand off to `openissue-grill-me` via `openissue start <id>`.
 
 ## Output
 
-按高/中/低/未评估列出需求 id、标题、理由与阻塞/待刷新标记；单独列出冲突。说明本次做了哪些手动调整、哪些仍待评估，以及为什么没有自动关闭任何需求。
+Summarize issues grouped by `high`, `medium`, `low`, and `unassessed` (showing `id`, `title`, `reason`, and `manual`/`stale`/`dependency_floor`/`blocked`/`invalid_dependency` flags), list any `conflicts` separately, state exact adjustments made (or why none were made), and confirm no issues were auto-closed.

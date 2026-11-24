@@ -1,60 +1,84 @@
 ---
 name: openissue-capture
-description: 把还不能实现、也还写不出 spec 的想法或 bug 捕获为 OpenIssue 需求。只记录，不实现。
+description: Capture or refine an early idea, bug, or improvement into the OpenIssue anchor inbox before it is ready for implementation or an OpenSpec plan. Records facts only; never implements code or creates proposals.
 allowed-tools: Bash(openissue:*)
 license: MIT
 compatibility: Requires openissue CLI.
 metadata:
   author: openissue
-  version: "1.0"
+  version: "1.1"
 ---
 
 # OpenIssue Capture
 
-当用户描述一个值得记住、但现在不能做或还没成熟到 OpenSpec 的想法、缺陷、改进时，把它放进产品锚点的需求收件箱。
+**Lifecycle stage:** Inbox Capture & Refinement (Stage 1 of 4: Capture → Triage → Interview & Spec → Handoff & Archive).
+
+Use this skill when the user shares an idea, defect, or improvement that is worth tracking in the product's single-source-of-truth inbox (`openissue/issues/`) but is not yet ready for immediate implementation or a full OpenSpec proposal.
 
 ## Rules
 
-- 标题是唯一必填项；标题要能独立看懂，不要把整段描述塞进标题。
-- 只写用户已经确认的事实。区分“现象”“证据”“期望”“待确认”，不要补造复现步骤、优先级或验收标准。
-- 先查重，再创建。相似需求优先建议补充原需求，而不是新建重复项。
-- **不要在本流程中实现代码、修改仓库业务文件、创建 OpenSpec 变更或关闭需求。**
-- 需求只在锚点保存一份；成员仓库不产生副本。
+- **Title is the only required field:** Write a concise, self-contained title. Do not stuff a paragraph into the title.
+- **Fact discipline:** Record only facts confirmed by the user or directly observed in the repository. Separate **Observed Behavior**, **Evidence**, **Expected Outcome**, and **Open Questions**. Never fabricate reproduction steps, priority tiers, or acceptance criteria.
+- **Deduplicate before creating:** Always inspect existing issues first. When an open issue covers the same user intent, prefer refining or supplementing it (`openissue edit`) rather than creating a duplicate.
+- **Single source of truth:** Issues live only in the product anchor repository (`openissue/issues/OI-YYYYMMDD-XXXX.md`). Member repositories hold pointers only and never store local copies.
+- **Strict scope boundary:** **Do NOT implement code, modify business files, set priority tiers, create OpenSpec changes, or close issues in this workflow.** If the user wants to prioritize next, hand off to `openissue-triage`; if the requirement is already mature for specification, hand off to `openissue-grill-me` via `openissue start <id>`.
 
 ## Steps
 
-1. **定位产品**：在锚点或已登记成员仓库运行：
+1. **Locate the product and load existing issues:**
+   Run from the anchor repository or a registered member repository:
    ```bash
    openissue list --status all --json
    ```
-   如果失败，说明当前仓库未接入；按错误提示请用户提供锚点，或使用 `--anchor <path>`。不要自行初始化一个错误的产品。
-2. **查重**：从 JSON 中按标题与描述比对。发现高度相似项时，向用户说明原需求 id 与差异，询问是补充还是新建。
-3. **整理描述**：用下面的结构，缺失的章节可省略，但不要捏造：
+   - If the repository belongs to multiple products, ask the user which `--product <id>` to target.
+   - If the repository is unregistered, report the error and ask the user for the anchor path (`--anchor <path>`) or to initialize/register first. Do not initialize an arbitrary product on your own.
+   - If `conflicts` in the JSON output is non-empty, report those malformed files to the user alongside your result; never silently ignore them.
+
+2. **Check for duplicates or related history:**
+   Compare the user's request against both `title` and `description` across open and closed issues (including synonyms and overlapping user journeys):
+   - **Clear open match:** Show the existing `id` and `title` and ask whether to supplement its description with `openissue edit <id> --description "<updated description>" --json` (preserving confirmed existing details) or create a separate issue.
+   - **Closed match only:** Do not silently create a duplicate or silently reopen it. Show the closed issue (`id`, `title`, `close.reason`, `close.note`) and ask whether to reopen it (`openissue reopen <id>`) or capture a new issue.
+   - **No match:** Proceed to Step 3.
+
+3. **Structure the description cleanly:**
+   Use only sections supported by confirmed facts; omit empty sections rather than inventing details:
    ```markdown
-   ## 现象
+   ## Observed Behavior
 
-   ## 证据
+   ## Evidence
 
-   ## 期望
+   ## Expected Outcome
 
-   ## 待确认
+   ## Open Questions
    ```
-4. **创建**：
-   ```bash
-   openissue create "<标题>" --description "<描述>" --json
-   ```
-   描述较长时先写入临时文件再通过 shell 传入；不要把引号或换行拼坏。
-5. **确认落盘**：从 JSON 读取 `id`、`path` 与 `issue.status`，必要时运行：
+
+4. **Create or update the issue:**
+   - For a new issue:
+     ```bash
+     openissue create "<concise title>" --description "<structured description>" --json
+     ```
+   - To refine an existing open issue:
+     ```bash
+     openissue edit <id> --description "<merged description>" --json
+     ```
+   For multi-line or quote-heavy descriptions, pass text safely (e.g., command substitution from a temp file or heredoc) so quotes and newlines are preserved intact.
+
+5. **Verify persistence:**
+   Confirm `id`, `path`, and `status` from the JSON response, or verify with:
    ```bash
    openissue show <id> --json
    ```
-6. **收尾**：报告需求 id、标题与保存路径；说明它默认进入未评估队列。可以建议下一步做 triage，但不要自行设置优先级或创建提案。
 
-## Output
+6. **Report and hand off:**
+   Present the issue `id`, `title`, storage `path`, and current state (`open`, `unassessed`). Note the next lifecycle options without executing them unasked:
+   - `openissue priority` / `openissue-triage` to assess priority and dependencies;
+   - `openissue start <id>` / `openissue-grill-me` when ready to begin a product decision interview and OpenSpec draft.
+
+## Output Format
 
 ```text
-已捕获 OI-YYYYMMDD-XXXX：<标题>
-路径：openissue/issues/OI-YYYYMMDD-XXXX.md
-状态：打开（未评估）
-下一步：需要时运行 openissue priority 或 openissue board 审阅。
+Captured OI-YYYYMMDD-XXXX: <title>
+Path: openissue/issues/OI-YYYYMMDD-XXXX.md
+Status: open (unassessed)
+Next: Run `openissue priority` (or `openissue-triage`) to triage, or `openissue start OI-YYYYMMDD-XXXX` when ready for an OpenSpec interview.
 ```

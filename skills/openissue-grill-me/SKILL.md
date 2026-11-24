@@ -6,10 +6,12 @@ license: MIT
 compatibility: Requires openissue CLI, OpenSpec CLI, and an Agent conversation.
 metadata:
   author: openissue
-  version: "1.0"
+  version: "1.1"
 ---
 
 # OpenIssue Grill-Me: User-Centered Product Decision Interview
+
+**Lifecycle stage:** Product Decision Interview & OpenSpec Planning (Stage 3 of 4: Capture → Triage → Interview & Spec → Handoff & Archive).
 
 Act as a seasoned Product Engineer. Interview the user rigorously about every important aspect of a product plan or feature design until the product behavior is unambiguous and the relevant decisions are captured in OpenSpec.
 
@@ -21,8 +23,9 @@ Use this skill when the OpenSpec work originates from an OpenIssue requirement, 
 
 - For a direct OpenSpec request with no OpenIssue requirement source, use the standard propose workflow instead.
 - If the source is ambiguous, ask whether the work corresponds to an OpenIssue requirement before creating a proposal or modifying a requirement.
-- An interview may start only from an open OpenIssue requirement. If no requirement exists, create one with `openissue create`, then enter the interview.
+- An interview may start only from an open OpenIssue requirement. If no requirement exists, create one with `openissue create` (following `openissue-capture` fact discipline), then enter the interview.
 - The interview context is always obtained through `openissue start <id> --json`; that command does not create a proposal.
+- Check `blocked_by` via `openissue show <id> --json` before planning; if the issue has open or `wontdo` blockers, surface them so the user confirms whether to proceed or resolve dependencies first via `openissue-triage`.
 - Planning artifacts are `proposal.md`, `specs/`, and `design.md`; `tasks.md` is not part of the planning scope. Generate tasks only after the user explicitly ends the interview, then stop before implementation, OpenSpec apply, or closing the requirement.
 
 ### 0.1 Resolve the requirement
@@ -91,7 +94,7 @@ openspec new change <change-id> --description "<requirement title, description, 
 openissue handoff <id> --link <change-id> --from-interview
 ```
 
-`--from-interview` is an internal interview path. It writes the requirement association and the `x-openissue-interview` marker without showing the manual-link warning. It does not copy or rewrite the proposal body.
+`--from-interview` is an internal interview path. It writes the requirement association (`x-openissue-issues`), the `x-openissue-interview` (`status: incomplete`) marker into `.openspec.yaml`, and a content snapshot hash onto the issue without showing the manual-link warning. It does not copy or rewrite the proposal body.
 
 Use the same linking command when taking over an active proposal that is not yet marked as an interview draft:
 
@@ -105,7 +108,7 @@ After linking, verify the visible state:
 openissue show <id> --json
 ```
 
-The requirement must remain open, show the linked proposal, and carry the incomplete-interview marker. The marker is an overlay; it must not introduce a third lifecycle state.
+The requirement must remain open, show the linked proposal, and carry the incomplete-interview marker. The marker is an overlay; it must not introduce a third lifecycle state. If the issue title or description is later refined via `openissue edit`, `updated_since_proposal` will signal snapshot drift for review before archival.
 
 ### 0.4 Stable draft identity
 
@@ -126,8 +129,8 @@ The requirement must remain open, show the linked proposal, and carry the incomp
   openissue start <id> --discard <change-id> --yes
   ```
 
-- Use `openissue-handoff` only for relinking an existing proposal or confirming completion after all linked proposals are archived. Never use it to create a replacement proposal.
-- Never auto-close a requirement. When all linked proposals are archived, show the pending-completion state and wait for the user's explicit confirmation.
+- Use `openissue-handoff` only for relinking an existing proposal or confirming completion after all linked proposals are archived (`openissue confirm <id>`). Never use it to create a replacement proposal.
+- Never auto-close a requirement. After tasks are generated and the user later requests implementation (`openspec apply`) and archival (`openspec archive`), show the pending-completion state and complete closure through `openissue-handoff` (`openissue confirm <id>`) only after the user explicitly confirms.
 
 ## 1. Core Principles
 
@@ -420,7 +423,7 @@ Before considering the decision record complete:
 
 Do not set `skip_specs: true` to bypass required behavior documentation. Use it only when the change genuinely has no spec-level behavior change, such as a pure refactor, tooling-only change, or documentation-only change. Never invent a requirement solely to satisfy validation.
 
-Do not archive a change unless the user explicitly requests that step or the active workflow clearly authorizes it. When archiving is requested, follow the project's OpenSpec workflow and verify the archived result.
+Do not archive a change unless the user explicitly requests that step or the active workflow clearly authorizes it. When implementation and `openspec archive` are later requested and completed, transition to `openissue-handoff` to verify archival across all linked proposals and run `openissue confirm <id>` only upon explicit user confirmation.
 
 ## 5. Quality Rules and Guardrails
 
@@ -491,5 +494,5 @@ The final handoff must include:
 For an OpenIssue session, also report:
 
 - the requirement id and draft id;
-- whether tasks were generated;
-- the next action the user must explicitly request.
+- whether tasks were generated (and if generated, confirm no code was modified and `openissue` remains `open`);
+- the next action the user must explicitly request (continue interview, generate tasks, run `openspec apply` / `openspec archive`, or confirm completion via `openissue-handoff` after archival).
