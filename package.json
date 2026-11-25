@@ -14,15 +14,19 @@
     "skills"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "dev": "tsx src/web.ts",
+    "build": "pnpm build:server && pnpm build:ui",
+    "build:server": "tsc -p tsconfig.json",
+    "build:ui": "tsc -p tsconfig.ui.json --noEmit && vite build --config vite.board.config.ts",
+    "dev": "pnpm build:ui && tsx src/web.ts",
+    "dev:ui": "vite --config vite.board.config.ts",
     "start": "node dist/web.js",
     "cli": "tsx src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pretest:e2e": "pnpm build",
     "test:e2e": "playwright test",
     "e2e:product": "node scripts/full-product-e2e.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.ui.json --noEmit"
   },
   "dependencies": {
     "commander": "^14.0.0",
@@ -31,9 +35,20 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
+    "@tailwindcss/vite": "^4.3.5",
     "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "lucide-react": "^0.546.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "^4.3.5",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
+    "vite": "^8.3.8",
     "vitest": "^3.2.0"
   }
 }

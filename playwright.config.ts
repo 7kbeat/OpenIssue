@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+const channel = process.env.PLAYWRIGHT_CHANNEL;
+
 export default defineConfig({
   testDir: './test/e2e',
   timeout: 30_000,
@@ -9,5 +11,6 @@ export default defineConfig({
   use: {
     headless: true,
     trace: 'retain-on-failure',
+    ...(channel ? { channel } : {}),
   },
 });

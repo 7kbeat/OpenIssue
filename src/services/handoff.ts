@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { readFile, readdir, rename, rm } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import YAML from 'yaml';
 import { OpenIssueError } from '../core/errors.js';
@@ -11,10 +11,11 @@ import { writeTextAtomic } from '../storage/atomic.js';
 import { mutateIssue, publicIssue } from '../storage/issue.js';
 
 export interface InterviewState {
-  status: 'incomplete';
+  status: 'incomplete' | 'completed';
   issue: string;
   started_at: string;
   updated_at: string;
+  completed_at?: string;
 }
 
 export interface ProposalState extends ProposalLink {
@@ -30,8 +31,10 @@ export interface HandoffState {
   link_invalid: boolean;
   updated_since_proposal: boolean;
   interview_incomplete: boolean;
+  interview_completed: boolean;
   interview_unknown: boolean;
   interview_change_ids: string[];
+  interview_completed_change_ids: string[];
   resume_change_id?: string;
 }
 
@@ -48,7 +51,7 @@ export interface StartProposal {
   id: string;
   path: string;
   state: 'active' | 'archived' | 'missing';
-  interview_status: 'none' | 'incomplete' | 'unknown';
+  interview_status: 'none' | 'incomplete' | 'completed' | 'unknown';
 }
 
 export interface StartContext {
@@ -61,7 +64,7 @@ export interface StartContext {
   selection_required: boolean;
   resume_change_id?: string;
   interview: {
-    status: 'none' | 'incomplete' | 'unknown';
+    status: 'none' | 'incomplete' | 'completed' | 'unknown';
     change_ids: string[];
   };
   skill_available: boolean;
@@ -83,8 +86,10 @@ export function emptyHandoffState(): HandoffState {
     link_invalid: false,
     updated_since_proposal: false,
     interview_incomplete: false,
+    interview_completed: false,
     interview_unknown: false,
     interview_change_ids: [],
+    interview_completed_change_ids: [],
   };
 }
 
@@ -102,7 +107,7 @@ export function buildStartContext(input: BuildStartContextInput): StartContext {
     path: proposal.path,
     state: proposal.state,
     interview_status: proposal.interview
-      ? 'incomplete'
+      ? proposal.interview.status
       : proposal.interview_unknown
         ? 'unknown'
         : 'none',
@@ -119,7 +124,9 @@ export function buildStartContext(input: BuildStartContextInput): StartContext {
     ? 'incomplete'
     : handoff.interview_unknown
       ? 'unknown'
-      : 'none';
+      : handoff.interview_completed
+        ? 'completed'
+        : 'none';
   return {
     issue: publicIssue(input.issue),
     focus: input.focus,
@@ -177,6 +184,10 @@ function buildStartInstruction(input: {
     const active = input.active[0]!;
     if (active.interview_status === 'incomplete') {
       lines.push(`继续未完成草稿 ${active.id}；不要创建第二份草稿。`);
+    } else if (active.interview_status === 'completed') {
+      lines.push(
+        `活跃提案 ${active.id} 的访谈已完成；不要重复访谈或重置访谈状态，仅在用户明确要求补充决策时继续更新规划产物。`,
+      );
     } else {
       lines.push(
         `接管活跃提案 ${active.id}；运行 openissue handoff ${input.issue.id} --link ${active.id} --from-interview 补写访谈标记，保留已有正文。`,
@@ -194,6 +205,7 @@ function buildStartInstruction(input: {
     lines.push(`关联失效的提案：${input.missing.map((proposal) => proposal.id).join('、')}；不要自动覆盖，先让用户重新关联或明确新建。`);
   }
   lines.push('访谈中每确认一项决策，立即按归属写入 proposal、specs 或 design，让用户看到 diff。');
+  lines.push('用户明确执行“结束访谈并生成任务”后，先整理规划产物并生成 TDD tasks；若 openissue show 仍显示访谈未完成，再运行 openissue start <id> --complete <change-id> 标记已完成。');
   lines.push('tasks 仅在用户明确执行“结束访谈并生成任务”后生成；生成后停止，不进入实现。');
   lines.push('只有用户明确要求实现后，才进入标准 OpenSpec apply。');
   lines.push('来自 OpenIssue 需求的规划使用本流程；没有需求来源的 OpenSpec 工作继续使用标准 propose。');
@@ -255,7 +267,54 @@ export async function markInterviewStarted(
   now = new Date().toISOString(),
 ): Promise<void> {
   const metadata = await readChangeMetadata(anchorRoot, changeId);
+  if (parseInterviewMarker(metadata['x-openissue-interview']).state?.status === 'completed') {
+    return;
+  }
   await writeChangeMetadata(anchorRoot, changeId, addInterviewMarker(metadata, issueId, now));
+}
+
+export async function completeInterview(input: {
+  anchorRoot: string;
+  issue: Issue;
+  changeId: string;
+  now?: string;
+}): Promise<void> {
+  const { anchorRoot, issue, changeId } = input;
+  if (!isValidChangeId(changeId)) {
+    throw new OpenIssueError(
+      '变更标识只能包含小写字母、数字与连字符，且不能以连字符开头',
+      'INVALID_CHANGE_ID',
+    );
+  }
+  if (!issue.proposals.some((proposal) => proposal.id === changeId)) {
+    throw new OpenIssueError(`需求未关联提案 ${changeId}`, 'PROPOSAL_NOT_LINKED');
+  }
+  if (!existsSync(path.join(anchorRoot, 'openspec', 'changes', changeId))) {
+    throw new OpenIssueError(
+      `提案 ${changeId} 不在活跃变更中，不能标记访谈完成`,
+      'CHANGE_NOT_FOUND',
+    );
+  }
+  const metadata = await readChangeMetadata(anchorRoot, changeId);
+  const parsed = parseInterviewMarker(metadata['x-openissue-interview']);
+  if (parsed.unknown) {
+    throw new OpenIssueError(
+      `提案 ${changeId} 的访谈标记无法读取，不能标记完成`,
+      'INTERVIEW_STATE_UNKNOWN',
+    );
+  }
+  if (!parsed.state) {
+    throw new OpenIssueError(
+      `提案 ${changeId} 不是访谈草稿，不能标记完成`,
+      'NOT_INTERVIEW_DRAFT',
+    );
+  }
+  if (parsed.state.status === 'completed') return;
+  await writeChangeMetadata(
+    anchorRoot,
+    changeId,
+    completeInterviewMarker(metadata, issue.id, input.now ?? new Date().toISOString()),
+  );
 }
 
 export async function discardInterview(input: {
@@ -352,7 +411,16 @@ export async function readHandoffState(
     });
   }
   const activeInterviewIds = proposals
-    .filter((proposal) => proposal.state === 'active' && proposal.interview)
+    .filter(
+      (proposal) =>
+        proposal.state === 'active' && proposal.interview?.status === 'incomplete',
+    )
+    .map((proposal) => proposal.id);
+  const activeCompletedInterviewIds = proposals
+    .filter(
+      (proposal) =>
+        proposal.state === 'active' && proposal.interview?.status === 'completed',
+    )
     .map((proposal) => proposal.id);
   return {
     proposals,
@@ -363,10 +431,12 @@ export async function readHandoffState(
     link_invalid: proposals.some((proposal) => proposal.state === 'missing'),
     updated_since_proposal: proposals.some((proposal) => proposal.updated_since_proposal),
     interview_incomplete: activeInterviewIds.length > 0,
+    interview_completed: activeCompletedInterviewIds.length > 0,
     interview_unknown: proposals.some(
       (proposal) => proposal.state !== 'missing' && proposal.interview_unknown,
     ),
     interview_change_ids: activeInterviewIds,
+    interview_completed_change_ids: activeCompletedInterviewIds,
     ...(activeInterviewIds.length === 1 ? { resume_change_id: activeInterviewIds[0]! } : {}),
   };
 }
@@ -414,6 +484,50 @@ export async function findArchivedChange(
     (name) => name === changeId || name.endsWith(`-${changeId}`),
   );
   return match ? path.join(archiveRoot, match) : undefined;
+}
+
+export async function archiveChange(input: {
+  anchorRoot: string;
+  changeId: string;
+  now?: string;
+}): Promise<void> {
+  if (!isValidChangeId(input.changeId)) {
+    throw new OpenIssueError(
+      '变更标识只能包含小写字母、数字与连字符，且不能以连字符开头',
+      'INVALID_CHANGE_ID',
+    );
+  }
+  const changesRoot = path.join(input.anchorRoot, 'openspec', 'changes');
+  const source = path.join(changesRoot, input.changeId);
+  if (!existsSync(source)) {
+    throw new OpenIssueError(`找不到活跃提案 ${input.changeId}`, 'CHANGE_NOT_FOUND');
+  }
+  const now = input.now ?? new Date().toISOString();
+  const archiveRoot = path.join(changesRoot, 'archive');
+  const prefix = now.slice(0, 10);
+  const destination = path.join(archiveRoot, `${prefix}-${input.changeId}`);
+  if (existsSync(destination)) {
+    throw new OpenIssueError(`归档目录已存在：${path.basename(destination)}`, 'ARCHIVE_EXISTS');
+  }
+  await mkdir(archiveRoot, { recursive: true });
+  const metadataPath = path.join(source, '.openspec.yaml');
+  const raw = existsSync(metadataPath)
+    ? await readFile(metadataPath, 'utf8')
+    : '';
+  const metadata = raw.trim() ? YAML.parse(raw) : {};
+  if (!isRecord(metadata)) {
+    throw new OpenIssueError('提案元数据格式无效，无法归档', 'INVALID_CHANGE_METADATA');
+  }
+  await writeTextAtomic(
+    metadataPath,
+    YAML.stringify({ ...metadata, archived_at: now }, { lineWidth: 0 }),
+  );
+  try {
+    await rename(source, destination);
+  } catch (error) {
+    await writeTextAtomic(metadataPath, raw).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function readChangeMetadata(
@@ -503,6 +617,31 @@ function addInterviewMarker(
   };
 }
 
+function completeInterviewMarker(
+  metadata: Record<string, unknown>,
+  issueId: string,
+  now: string,
+): Record<string, unknown> {
+  const current = isRecord(metadata['x-openissue-interview'])
+    ? metadata['x-openissue-interview']
+    : {};
+  const startedAt =
+    typeof current.started_at === 'string' && current.started_at.trim()
+      ? current.started_at
+      : now;
+  return {
+    ...metadata,
+    'x-openissue-interview': {
+      ...current,
+      status: 'completed',
+      issue: issueId,
+      started_at: startedAt,
+      updated_at: now,
+      completed_at: now,
+    },
+  };
+}
+
 function parseInterviewMarker(value: unknown): {
   state?: InterviewState;
   unknown: boolean;
@@ -510,7 +649,7 @@ function parseInterviewMarker(value: unknown): {
   if (value === undefined) return { unknown: false };
   if (!isRecord(value)) return { unknown: true };
   if (typeof value.status !== 'string') return { unknown: true };
-  if (value.status !== 'incomplete') return { unknown: false };
+  if (value.status !== 'incomplete' && value.status !== 'completed') return { unknown: true };
   if (
     typeof value.issue !== 'string' ||
     !value.issue.trim() ||
@@ -519,12 +658,19 @@ function parseInterviewMarker(value: unknown): {
   ) {
     return { unknown: true };
   }
+  const completedAt =
+    typeof value.completed_at === 'string' && value.completed_at.trim()
+      ? value.completed_at
+      : undefined;
   return {
     state: {
-      status: 'incomplete',
+      status: value.status,
       issue: value.issue,
       started_at: value.started_at,
       updated_at: value.updated_at,
+      ...(value.status === 'completed' && completedAt
+        ? { completed_at: completedAt }
+        : {}),
     },
     unknown: false,
   };

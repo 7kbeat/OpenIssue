@@ -15,7 +15,8 @@ OpenIssue is a Git-native requirement inbox for product engineers: capture an id
 ```mermaid
 flowchart LR
   CLI[cli.ts<br/>program + error mapping] --> CMD[commands/*<br/>validation + output]
-  BOARD[board/server.ts<br/>127.0.0.1 HTTP] --> DATA[board/data.ts]
+  BOARD[board/server.ts<br/>127.0.0.1 HTTP + React UI] --> DATA[board/data.ts]
+  BOARD --> UI[board-ui<br/>React + Vite + Tailwind]
   CMD --> CTX[commands/context.ts<br/>activeWorkspace]
   BOARD --> CTX
   CTX --> WS[storage/workspace.ts<br/>resolveWorkspace]
@@ -32,14 +33,14 @@ flowchart LR
   SVC --> OSPEC[(openspec/changes)]
   SVC --> ST
   CMD --> OUT[stdout: zh-CN or JSON]
-  BOARD --> HTML[HTML + JSON responses]
+  BOARD --> HTML[Static UI + JSON responses]
 ```
 
 | Layer    | Path            | Rule                                                                             |
 | -------- | --------------- | -------------------------------------------------------------------------------- |
 | Entry    | `src/cli.ts`    | Assembles Commander, maps errors to exit codes                                   |
 | Commands | `src/commands/` | Commander wiring, input validation, console output; no raw fs                    |
-| Board    | `src/board/`    | HTTP server, data loading, HTML rendering; shares the storage layer              |
+| Board    | `src/board/`    | HTTP server, shared board data, React UI, and static asset serving              |
 | Services | `src/services/` | Cross-layer orchestration (OpenSpec process + metadata + issue links)            |
 | Core     | `src/core/`     | Types, errors, IDs, paths, hashing, author, guards                               |
 | Domain   | `src/domain/`   | Pure functions only (no I/O)                                                     |
@@ -81,7 +82,7 @@ Single-repo init uses the current repo as anchor with no workspace pointer or ro
 | Directory                           | Purpose                                                                                                                                                                                                      |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/commands/`                     | Command families: `init.ts` (workspace/single/new project entry), `register.ts` (manual member registration), `create.ts`, `edit.ts`, `list.ts` (list/show), `lifecycle.ts` (close/reopen), `dependencies.ts` (depend/undepend), `priority.ts`, `focus.ts`, `tier.ts`, `start.ts` (interview entry/discard), `handoff.ts` (link/confirm), `board.ts`, `skills.ts`, `context.ts` |
-| `src/board/`                        | `server.ts` HTTP routes/actions, `data.ts` shared board data, `render.ts` server-rendered HTML |
+| `src/board/`                        | `server.ts` HTTP routes/actions, `data.ts` shared board data, `snapshot.ts` full UI view model, `types.ts` board contract, `ui/` React + Vite + Tailwind interface |
 | `src/services/`                     | `workspace-init.ts` anchor/member discovery, pointer, new project scaffold, phases/retry; `handoff.ts` OpenSpec metadata (`x-openissue-issues`, `x-openissue-interview`), interview entry context, resume/discard, archive detection, snapshot diff |
 | `src/skills/`                       | `catalog.ts` bundled asset loading + tool table; `manifest.ts` hash manifest; `install.ts` install/status/update + OpenSpec `.agents/skills` promotion |
 | `skills/`                           | Four installable `SKILL.md` workflows; initialization lives in README, not a skill |
@@ -99,7 +100,9 @@ Single-repo init uses the current repo as anchor with no workspace pointer or ro
 | Task                  | Command                                                                      |
 | --------------------- | ---------------------------------------------------------------------------- |
 | Install               | `pnpm install`                                                               |
-| Build (tsc → `dist/`) | `pnpm build`                                                                 |
+| Build (server tsc + UI Vite → `dist/`) | `pnpm build`                                             |
+| Build UI only         | `pnpm build:ui`                                                              |
+| Dev UI only           | `pnpm dev:ui` (Vite proxies `/api` to `127.0.0.1:4310`)                      |
 | Global local install/update | `pnpm build && npm uninstall -g openissue && npm install -g --install-links . --offline` |
 | Type check only       | `pnpm typecheck`                                                             |
 | Dev CLI (no build)    | `pnpm dev -- --help`                                                         |
@@ -108,7 +111,7 @@ Single-repo init uses the current repo as anchor with no workspace pointer or ro
 | Watch tests           | `pnpm test:watch`                                                            |
 | Single file           | `pnpm exec vitest run test/integration/lifecycle.test.ts`                    |
 | Filter by name        | `pnpm test -- dependencies`                                                  |
-| E2E                   | `pnpm test:e2e` — Playwright board suite in `test/e2e/board.spec.ts` |
+| E2E                   | `pnpm test:e2e` — builds the board UI, then runs Playwright in `test/e2e/board.spec.ts` (`PLAYWRIGHT_CHANNEL=chrome` to use system Chrome locally) |
 | Product E2E           | `pnpm e2e:product` — anchor + two members, real OpenSpec archive |
 | Skills smoke          | `node dist/cli.js skills list` — loads bundled Markdown from package root |
 
@@ -159,7 +162,8 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 | `src/skills/install.ts`                                            | Skill install/status/update; interview-skill availability check         |
 | `src/skills/catalog.ts`                                            | Bundled skill loading, frontmatter validation, tool/alias table        |
 | `skills/*/SKILL.md`                                                | Agent-facing workflows: capture, triage, grill-me, handoff             |
-| `src/board/server.ts`                                              | Local HTTP server and API actions                                       |
+| `src/board/server.ts`                                              | Local HTTP server, UI asset serving, board API actions, legacy API compatibility |
+| `src/board/ui/App.tsx`                                             | Four-tab board React shell: board, dependencies, OpenSpec, workspace    |
 | `test/e2e/board.spec.ts`                                           | Playwright board/search/single-user coverage                            |
 | `src/core/types.ts`                                                | Canonical `Issue`, `ProductManifest`, `PriorityView*` shapes                                                            |
 | `test/helpers/fixtures.ts`                                         | `createAnchor`, `createMember`, `runCli`, registry fixtures                                                             |
@@ -171,14 +175,14 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 
 - Node.js **>= 22** (CI: 22 and 24). Verified locally on Node 26. No CommonJS output.
 - **pnpm** only (`pnpm-lock.yaml`; CI installs pnpm 12). Do not use npm/yarn or hand-edit the lockfile. `engines` is enforced; `packageManager` is not pinned.
-- Build tool is plain `tsc` — no bundler, no path aliases, no decorators. `dist/` is generated and gitignored; `bin.openissue` points to `dist/cli.js` (shebang present). `test/` is excluded from the build, so tests always run TypeScript via `tsx`.
-- Dependencies are intentionally minimal: `commander` (CLI), `yaml` (YAML), `write-file-atomic` (safe writes). Dev: `typescript`, `tsx`, `vitest`, `@playwright/test`, `@types/node`.
+- CLI/server build is plain `tsc`; the board UI is built by Vite into `dist/board-ui/`. No path aliases or decorators. `dist/` is generated and gitignored; `bin.openissue` points to `dist/cli.js` (shebang present). `test/` is excluded from the server build, so tests run TypeScript via `tsx`.
+- Runtime dependencies: `commander` (CLI), `yaml` (YAML), `write-file-atomic` (safe writes). Board UI libraries are dev/build dependencies: `react`, `react-dom`, `react-markdown`, `remark-gfm`, `lucide-react`, `vite`, `@vitejs/plugin-react`, `tailwindcss`, `@tailwindcss/vite`, plus React type packages; Vite bundles them into `dist/board-ui/` so global installs do not fetch UI libraries at runtime.
 - Windows is first-class: use `path.join/resolve`, `toPosix` for display, and platform-aware binaries (`openspec.cmd` on win32). Never hardcode `/`.
 - No ESLint/Prettier/EditorConfig and no coverage tool. Keep diffs focused; do not add tooling or dependencies without need.
 
 ## Testing & QA
 
-- **Runner**: Vitest, `test/**/*.test.ts`, `test/e2e/**` excluded, 20s test/hook timeout. Current suite: 20 files / 155 tests. No coverage thresholds.
+- **Runner**: Vitest, `test/**/*.test.ts`, `test/e2e/**` excluded, 20s test/hook timeout. Current suite: 21 files / 165 tests. No coverage thresholds.
 - **Layers**: `test/unit/{paths,language,init-plan,init-tui}.test.ts` (pure helpers, language, plan, TUI state), `test/fixtures.test.ts` (fixture smoke, invokes real `openspec`), `test/smoke.test.ts` (CLI version), `test/integration/{capture,edit,workspace,workspace-init,init-language,lifecycle,dependencies,priority,assistant,handoff,grill-entry,board,search,skills}.test.ts` (real CLI/board + temp dirs), `test/e2e/board.spec.ts` (Playwright).
 - **Integration harness**: `runCli(args, { cwd, env })` spawns `node node_modules/tsx/dist/cli.mjs src/cli.ts …`; **no build required**. Always isolate with `OPENISSUE_HOME=<temp>/.home` and `OPENISSUE_AUTHOR=测试作者`. Track temp dirs and clean them in `afterEach` via `Promise.all(cleanup.splice(0).map(x => x.cleanup()))`.
 - **Assertions are behavioral**: exit status, expected-language stderr substrings, on-disk YAML/body, and `--json` stdout. Tests deliberately assert raw file equality when a command must not mutate data. Prefer these over mocking internals.
@@ -194,7 +198,7 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 Implemented:
 
 - CLI capture/edit/list/show, lifecycle, dependencies, focus, manual tiers, priority display.
-- Local board with shared storage, filtering/search, tier/status/focus actions, archive confirmation, relinking, conflict area, and `127.0.0.1` binding.
+- Local board with shared storage, `127.0.0.1` binding, and a full React UI: priority lanes/list, issue inspector, dependency chains/editing, OpenSpec fact pages and archive actions, workspace/file inspection, conflict area, and assistant emit/apply console.
 - Assistant protocol: `prioritize --emit` request with focus/facts/hashes and `--apply` validation with partial-result isolation.
 - OpenSpec interview entry and handoff: `start`, active-proposal takeover, `x-openissue-interview` incomplete state, resume/discard, `--link` association, snapshot diff, archive detection, and explicit completion confirmation.
 - OpenSpec facts (specs, active/archived proposals, task progress), input-hash cache/staleness, and manual/rule precedence.
@@ -208,7 +212,7 @@ Implemented:
 Known gaps / external conditions:
 
 - GitHub Actions has not been run remotely in this workspace; only the equivalent local commands have been verified.
-- Default `pnpm test:e2e` cannot launch because downloaded Playwright Chromium is missing; the same 4 tests pass with system Chrome (`channel: 'chrome'`).
+- `pnpm test:e2e` builds the UI first. If downloaded Playwright Chromium is unavailable, run with `PLAYWRIGHT_CHANNEL=chrome`; the same 5 board tests pass with system Chrome in this workspace.
 - `src/core/version.ts` and `package.json` must stay in sync; a test enforces it.
 - Multi-product sharing of one anchor repo remains a deferred design question, as recorded in the change design.
 - `../OpenIssue-spec-issue/openspec/changes/establish-openissue-v1/tasks.md` is now 71/71 checked; future scope changes should go through a new OpenSpec change and `openspec validate --strict`.

@@ -12,6 +12,7 @@ export interface BoardContext {
   anchorRoot: string;
   productDir: string;
   product: ProductManifest;
+  memberRoot?: string;
 }
 
 export interface BoardData {
@@ -24,6 +25,7 @@ export interface BoardData {
   startContexts: Map<string, StartContext>;
   blocking: Map<string, string[]>;
   waiting: Map<string, string[]>;
+  skillAvailable: boolean;
 }
 
 export async function loadBoardData(context: BoardContext): Promise<BoardData> {
@@ -85,6 +87,7 @@ export async function loadBoardData(context: BoardContext): Promise<BoardData> {
     startContexts,
     blocking,
     waiting,
+    skillAvailable,
   };
 }
 

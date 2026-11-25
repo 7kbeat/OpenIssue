@@ -153,6 +153,30 @@ describe('local board', () => {
     expect(item.interview_incomplete).toBe(true);
     expect(item.resume_change_id).toBe('interview-draft');
     expect(item.start_context.instruction).toContain('继续未完成草稿 interview-draft');
+
+    await writeFile(
+      path.join(changeDir, '.openspec.yaml'),
+      'schema: spec-driven\nx-openissue-interview:\n  status: completed\n  issue: OI-20260101-DDDD\n  started_at: 2026-01-01T00:00:00.000Z\n  updated_at: 2026-01-02T00:00:00.000Z\n  completed_at: 2026-01-02T00:00:00.000Z\n',
+      'utf8',
+    );
+    const completedSnapshot = await state(board.url);
+    if (
+      !isRecord(completedSnapshot.groups) ||
+      !Array.isArray(completedSnapshot.groups.unassessed)
+    ) {
+      throw new Error('invalid groups');
+    }
+    const completedItem = completedSnapshot.groups.unassessed.find(
+      (candidate) => isRecord(candidate) && candidate.id === 'OI-20260101-DDDD',
+    );
+    if (!isRecord(completedItem) || !isRecord(completedItem.start_context)) {
+      throw new Error('missing completed start context');
+    }
+    expect(completedItem.interview_incomplete).toBe(false);
+    expect(completedItem.interview_completed).toBe(true);
+    expect(completedItem.resume_change_id).toBeUndefined();
+    expect(completedItem.start_context.interview).toMatchObject({ status: 'completed' });
+    expect(completedItem.start_context.instruction).toContain('访谈已完成');
   });
 
   it('binds only to 127.0.0.1 and keeps the CLI usable after a board failure', async () => {

@@ -14,6 +14,7 @@ async function ensureBoardContext() {
       anchorRoot: resolved.anchorRoot,
       productDir: path.join(resolved.anchorRoot, 'openissue'),
       product: resolved.product,
+      ...(resolved.kind === 'member' ? { memberRoot: resolved.memberRoot } : {}),
     };
   }
 

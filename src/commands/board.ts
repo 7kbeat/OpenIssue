@@ -27,6 +27,7 @@ export function registerBoardCommand(program: Command): void {
             anchorRoot: workspace.anchorRoot,
             productDir: workspace.productDir,
             product: workspace.product,
+            ...(workspace.memberRoot ? { memberRoot: workspace.memberRoot } : {}),
           },
           port,
         });
