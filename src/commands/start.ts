@@ -5,6 +5,7 @@ import type { Command } from 'commander';
 import { OpenIssueError } from '../core/errors.js';
 import {
   buildStartContext,
+  completeInterview,
   discardInterview,
   findArchivedChange,
   readHandoffState,
@@ -16,6 +17,7 @@ import type { ActiveWorkspace } from './context.js';
 
 interface StartOptions {
   change?: string;
+  complete?: string;
   discard?: string;
   yes?: boolean;
   json?: boolean;
@@ -24,19 +26,30 @@ interface StartOptions {
 export function registerStartCommand(program: Command): void {
   program
     .command('start <id>')
-    .description('从需求开始产品决策访谈，输出可交给 Agent 的上下文')
+    .description('从需求开始产品决策访谈，输出可交给 Agent 的上下文；可标记完成或丢弃草稿')
     .option('--change <id>', '指定建议的草稿标识')
+    .option('--complete <change-id>', '将访谈草稿标记为已完成')
     .option('--discard <change-id>', '丢弃未完成的访谈草稿')
     .option('--yes', '确认丢弃，不再询问')
     .option('--json', '输出 JSON')
     .action(async (id: string, options: StartOptions, command: Command) => {
+      if (options.complete && (options.change || options.discard)) {
+        throw new OpenIssueError(
+          '--complete 不能与 --change 或 --discard 同时使用',
+          'INVALID_START_OPTIONS',
+        );
+      }
       if (options.change && options.discard) {
         throw new OpenIssueError('--change 与 --discard 不能同时使用', 'INVALID_START_OPTIONS');
       }
       const workspace = await workspaceFor(command);
       const issue = await findIssue(workspace.productDir, workspace.product.id, id);
       if (issue.status !== 'open') {
-        throw new OpenIssueError('需求已关闭，不能再开始或丢弃访谈', 'ISSUE_CLOSED');
+        throw new OpenIssueError('需求已关闭，不能再开始、完成或丢弃访谈', 'ISSUE_CLOSED');
+      }
+      if (options.complete) {
+        await complete(workspace, options, id);
+        return;
       }
       if (options.discard) {
         await discard(workspace, options, id);
@@ -107,10 +120,46 @@ export function registerStartCommand(program: Command): void {
       }
       if (context.interview.status === 'incomplete') {
         console.log(`访谈未完成：${context.interview.change_ids.join('、')}`);
+      } else if (context.interview.status === 'completed') {
+        console.log('访谈已完成');
       }
       console.log('\n把下面内容交给 Agent：\n');
       console.log(context.instruction);
     });
+}
+
+async function complete(
+  workspace: ActiveWorkspace,
+  options: StartOptions,
+  id: string,
+): Promise<void> {
+  const changeId = options.complete?.trim();
+  if (!changeId) {
+    throw new OpenIssueError('必须提供要标记完成的访谈草稿标识', 'CHANGE_ID_REQUIRED');
+  }
+  const issue = await findIssue(workspace.productDir, workspace.product.id, id);
+  await completeInterview({
+    anchorRoot: workspace.anchorRoot,
+    issue,
+    changeId,
+  });
+  const handoff = await readHandoffState(workspace.anchorRoot, issue);
+  if (options.json) {
+    console.log(
+      JSON.stringify(
+        {
+          completed_change_id: changeId,
+          issue: publicIssue(issue),
+          handoff,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  console.log(`已标记访谈已完成：${issue.id} / ${changeId}`);
+  console.log(`规划产物仍可修改；全部关联提案归档后使用 openissue confirm ${issue.id} 确认完成。`);
 }
 
 async function discard(

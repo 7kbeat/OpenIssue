@@ -210,6 +210,8 @@ sequenceDiagram
     Agent->>User: 列出未决项，继续访谈
   else 无未决项
     Agent->>OS: 生成 TDD tasks（RED/GREEN/REFACTOR/INTEGRATE）
+    Agent->>OI: openissue start ID --complete CHANGE_ID
+    OI-->>Agent: 访谈已完成
     Note over Agent,OS: 到此停止：不改代码、不进入 apply、不自动关闭需求
     opt 用户另行明确要求实现
       Agent->>OS: 标准 OpenSpec apply 与 archive
@@ -498,7 +500,16 @@ openissue start OI-20261120-ABCD --json
 1. 用 `openspec new change` 创建提案草稿；
 2. 用 `openissue handoff <id> --link <change> --from-interview` 建立关联并写入 `x-openissue-issues` 与 `x-openissue-interview`；
 3. 每确认一项决策就增量写入 proposal、specs 或 design；
-4. 只有用户明确说“结束访谈并生成任务”后才写 tasks，生成后停止。
+4. 只有用户明确说“结束访谈并生成任务”后才写 tasks；
+5. tasks 与规划产物校验通过后，用 `openissue start <id> --complete <change-id>` 将访谈显式标记为已完成。
+
+只完成对话或生成 tasks 并不会自动更新访谈状态；Agent 必须在结束访谈时执行第 5 步。可用以下命令核对：
+
+```bash
+openissue show OI-20261120-ABCD --json
+```
+
+`handoff.interview_completed` 应为 `true`，且变更 id 出现在 `handoff.interview_completed_change_ids` 中。
 
 需求保持打开；访谈未完成会同时显示在需求与草稿上。再次运行 `start` 会继续同一草稿；丢弃草稿必须二次确认：
 
@@ -634,7 +645,10 @@ OpenIssue 不会自动修复或丢弃无法解析的记录。
 使用 `openissue start <id>` 进入产品决策访谈。`handoff --change` 已被拒绝；只有重新关联已有提案才使用 `handoff --link`。
 
 **`访谈未完成`**  
-需求已关联一个访谈草稿，但尚未生成 tasks。运行 `openissue start <id>` 继续同一草稿；需要放弃时使用 `--discard <change-id> --yes`，执行前会要求二次确认。
+需求已关联一个访谈草稿，但尚未执行显式完成命令。运行 `openissue start <id>` 继续同一草稿；结束访谈时运行 `openissue start <id> --complete <change-id>`。需要放弃时使用 `--discard <change-id> --yes`，执行前会要求二次确认。
+
+**`访谈已完成`**  
+访谈草稿已通过 `openissue start <id> --complete <change-id>` 显式标记完成。若之后确认行为发生变化，先更新规划产物并重新生成 tasks；不要把已完成状态当作需求已关闭。全部提案归档后仍需 `openissue confirm <id>`。
 
 **看板端口被占用**  
 默认端口 `4310` 已被其他程序占用时，换一个端口：`openissue board --port 4311`；或让系统自动选择空闲端口：`openissue board --port 0`，终端会显示实际地址。启动失败不会影响命令行。

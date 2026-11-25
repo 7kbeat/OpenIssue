@@ -81,7 +81,7 @@ Single-repo init uses the current repo as anchor with no workspace pointer or ro
 
 | Directory                           | Purpose                                                                                                                                                                                                      |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/commands/`                     | Command families: `init.ts` (workspace/single/new project entry), `register.ts` (manual member registration), `create.ts`, `edit.ts`, `list.ts` (list/show), `lifecycle.ts` (close/reopen), `dependencies.ts` (depend/undepend), `priority.ts`, `focus.ts`, `tier.ts`, `start.ts` (interview entry/discard), `handoff.ts` (link/confirm), `board.ts`, `skills.ts`, `context.ts` |
+| `src/commands/`                     | Command families: `init.ts` (workspace/single/new project entry), `register.ts` (manual member registration), `create.ts`, `edit.ts`, `list.ts` (list/show), `lifecycle.ts` (close/reopen), `dependencies.ts` (depend/undepend), `priority.ts`, `focus.ts`, `tier.ts`, `start.ts` (interview entry/complete/discard), `handoff.ts` (link/confirm), `board.ts`, `skills.ts`, `context.ts` |
 | `src/board/`                        | `server.ts` HTTP routes/actions, `data.ts` shared board data, `snapshot.ts` full UI view model, `types.ts` board contract, `ui/` React + Vite + Tailwind interface |
 | `src/services/`                     | `workspace-init.ts` anchor/member discovery, pointer, new project scaffold, phases/retry; `handoff.ts` OpenSpec metadata (`x-openissue-issues`, `x-openissue-interview`), interview entry context, resume/discard, archive detection, snapshot diff |
 | `src/skills/`                       | `catalog.ts` bundled asset loading + tool table; `manifest.ts` hash manifest; `install.ts` install/status/update + OpenSpec `.agents/skills` promotion |
@@ -157,7 +157,7 @@ There is no lint or format script. Do not invent one; match existing style. CI r
 | `src/domain/dependencies.ts`                                       | `assertCanDepend`, cycle detection, open-blocker helpers                                |
 | `src/domain/assistant.ts`                                          | `--emit` request shape and `--apply` validation                         |
 | `src/domain/search.ts`                                             | Search and combination filters                                          |
-| `src/commands/start.ts`                                            | `start` entry, agent instruction, active/interview state, discard gate  |
+| `src/commands/start.ts`                                            | `start` entry, agent instruction, active/interview state, complete/discard gates |
 | `src/services/handoff.ts`                                          | OpenSpec link/archive/snapshot orchestration and interview metadata     |
 | `src/skills/install.ts`                                            | Skill install/status/update; interview-skill availability check         |
 | `src/skills/catalog.ts`                                            | Bundled skill loading, frontmatter validation, tool/alias table        |
@@ -200,14 +200,14 @@ Implemented:
 - CLI capture/edit/list/show, lifecycle, dependencies, focus, manual tiers, priority display.
 - Local board with shared storage, `127.0.0.1` binding, and a full React UI: priority lanes/list, issue inspector, dependency chains/editing, OpenSpec fact pages and archive actions, workspace/file inspection, conflict area, and assistant emit/apply console.
 - Assistant protocol: `prioritize --emit` request with focus/facts/hashes and `--apply` validation with partial-result isolation.
-- OpenSpec interview entry and handoff: `start`, active-proposal takeover, `x-openissue-interview` incomplete state, resume/discard, `--link` association, snapshot diff, archive detection, and explicit completion confirmation.
+- OpenSpec interview entry and handoff: `start`, active-proposal takeover, `x-openissue-interview` incomplete/completed state, explicit `start --complete` transition, resume/discard, `--link` association, snapshot diff, archive detection, and explicit completion confirmation.
 - OpenSpec facts (specs, active/archived proposals, task progress), input-hash cache/staleness, and manual/rule precedence.
 - Cross-platform CI workflow, Playwright suite, and full-product end-to-end script.
 - Four installable Agent skills (`openissue-capture/triage/grill-me/handoff`) with `openissue skills list|install|status|update`, hash manifest conflict protection, and default `init` installation to `.agents/skills`. Initialization is documented in README and is not a skill, so a fresh install never depends on an already-installed skill.
 - `openissue init` workspace discovery: lightweight `.openissue-workspace.yaml` pointer, OpenIssue/complete-OpenSpec anchor candidates, store-pointer exclusion, member preselection/conflicts, single-repo in-place init, new-project `<id>/` + `<id>-spec/` scaffold, OpenSpec agents promotion, managed root `AGENTS.md` index, and phase-aware failure/retry reporting.
 - `openissue init` visual flow: TTY-only full-screen navigation, auto-detected mode/language first screen, dynamic step wizard, grouped review, skills conflict handling, `--json` non-interactive contract, structured `init` failures, and retry/exit after partial writes.
 - `openissue init --zh/--en`: system-default language (`zh*` Chinese, other English), explicit → workspace → last-explicit → system precedence, per-workspace `$OPENISSUE_HOME/preferences.yaml`, new-workspace inheritance, localized human text, and OpenSpec artifact language for new projects only.
-- `openissue start` interview entry with active-proposal takeover, incomplete-interview resume/discard, Board copyable context, and `handoff --link` as the only manual association path.
+- `openissue start` interview entry with active-proposal takeover, incomplete-interview resume/discard, explicit `--complete` status transition, Board copyable context, and `handoff --link` as the only manual association path.
 
 Known gaps / external conditions:
 

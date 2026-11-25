@@ -110,6 +110,9 @@ export function registerListCommand(program: Command): void {
           console.log(`访谈未完成：${handoff.interview_change_ids.join('、')}`);
           console.log(`继续：openissue start ${issue.id}`);
         }
+        if (issue.status === 'open' && handoff.interview_completed) {
+          console.log(`访谈已完成：${handoff.interview_completed_change_ids.join('、')}`);
+        }
         if (handoff.interview_unknown) {
           console.log('访谈状态未知：关联提案的访谈标记无法读取');
         }

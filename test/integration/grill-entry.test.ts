@@ -325,6 +325,140 @@ describe('handoff boundary', () => {
   });
 });
 
+describe('interview completion', () => {
+  it('explicitly marks a linked interview draft completed and reports it', async () => {
+    const anchor = await createAnchor({ id: 'demo', openspec: true });
+    cleanup.push(anchor);
+    await installSkills(anchor);
+    await seed(anchor, 'OI-20260101-MMMM');
+    await createDraftAndLink(anchor, 'OI-20260101-MMMM', 'finish-draft');
+
+    const before = await metadata(anchor, 'finish-draft');
+    const completed = runCli(
+      ['start', 'OI-20260101-MMMM', '--complete', 'finish-draft', '--json'],
+      { cwd: anchor.root, env: env(anchor) },
+    );
+    expect(completed.status, completed.stderr).toBe(0);
+    const output = JSON.parse(completed.stdout) as {
+      completed_change_id: string;
+      handoff: {
+        interview_incomplete: boolean;
+        interview_completed: boolean;
+        interview_completed_change_ids: string[];
+      };
+    };
+    expect(output.completed_change_id).toBe('finish-draft');
+    expect(output.handoff.interview_incomplete).toBe(false);
+    expect(output.handoff.interview_completed).toBe(true);
+    expect(output.handoff.interview_completed_change_ids).toEqual(['finish-draft']);
+
+    const marker = await metadata(anchor, 'finish-draft');
+    expect(marker['x-openissue-interview']).toMatchObject({
+      status: 'completed',
+      issue: 'OI-20260101-MMMM',
+      started_at: (before['x-openissue-interview'] as Record<string, unknown>).started_at,
+    });
+    expect(
+      typeof (marker['x-openissue-interview'] as Record<string, unknown>).completed_at,
+    ).toBe('string');
+    expect((await readIssue(anchor, 'OI-20260101-MMMM')).proposals).toHaveLength(1);
+
+    const shown = runCli(['show', 'OI-20260101-MMMM'], {
+      cwd: anchor.root,
+      env: env(anchor),
+    });
+    expect(shown.status, shown.stderr).toBe(0);
+    expect(shown.stdout).toContain('访谈已完成');
+    expect(shown.stdout).not.toContain('访谈未完成');
+
+    const resumed = runCli(['start', 'OI-20260101-MMMM', '--json'], {
+      cwd: anchor.root,
+      env: env(anchor),
+    });
+    expect(resumed.status, resumed.stderr).toBe(0);
+    const resumedOutput = JSON.parse(resumed.stdout) as {
+      active_proposals: Array<{ id: string; interview_status: string }>;
+      interview: { status: string };
+      instruction: string;
+    };
+    expect(resumedOutput.active_proposals).toEqual([
+      expect.objectContaining({ id: 'finish-draft', interview_status: 'completed' }),
+    ]);
+    expect(resumedOutput.interview.status).toBe('completed');
+    expect(resumedOutput.instruction).toContain('访谈已完成');
+    expect(resumedOutput.instruction).not.toContain('继续未完成草稿');
+
+    const repeated = runCli(
+      ['start', 'OI-20260101-MMMM', '--complete', 'finish-draft', '--json'],
+      { cwd: anchor.root, env: env(anchor) },
+    );
+    expect(repeated.status, repeated.stderr).toBe(0);
+    expect(await metadata(anchor, 'finish-draft')).toEqual(marker);
+
+    const human = runCli(
+      ['start', 'OI-20260101-MMMM', '--complete', 'finish-draft'],
+      { cwd: anchor.root, env: env(anchor) },
+    );
+    expect(human.status, human.stderr).toBe(0);
+    expect(human.stdout).toContain('已标记访谈已完成：OI-20260101-MMMM / finish-draft');
+    expect(human.stdout).toContain('openissue confirm OI-20260101-MMMM');
+  });
+
+  it('rejects completion for proposals that are not incomplete interview drafts', async () => {
+    const anchor = await createAnchor({ id: 'demo', openspec: true });
+    cleanup.push(anchor);
+    await seed(anchor, 'OI-20260101-NNNN');
+    await createActiveChange(anchor, 'plain-change');
+
+    const unlinked = runCli(
+      ['start', 'OI-20260101-NNNN', '--complete', 'plain-change', '--json'],
+      { cwd: anchor.root, env: env(anchor) },
+    );
+    expect(unlinked.status).not.toBe(0);
+    expect(unlinked.stderr).toContain('未关联提案');
+
+    expect(
+      runCli(['handoff', 'OI-20260101-NNNN', '--link', 'plain-change', '--json'], {
+        cwd: anchor.root,
+        env: env(anchor),
+      }).status,
+    ).toBe(0);
+    const notDraft = runCli(
+      ['start', 'OI-20260101-NNNN', '--complete', 'plain-change', '--json'],
+      { cwd: anchor.root, env: env(anchor) },
+    );
+    expect(notDraft.status).not.toBe(0);
+    expect(notDraft.stderr).toContain('不是访谈草稿');
+    expect((await metadata(anchor, 'plain-change'))['x-openissue-interview']).toBeUndefined();
+
+    const invalid = runCli(
+      ['start', 'OI-20260101-NNNN', '--complete', '../escape', '--json'],
+      { cwd: anchor.root, env: env(anchor) },
+    );
+    expect(invalid.status).not.toBe(0);
+    expect(invalid.stderr).toContain('变更标识');
+  });
+
+  it('rejects complete mode combined with discard or change selection', async () => {
+    const anchor = await createAnchor({ id: 'demo', openspec: true });
+    cleanup.push(anchor);
+    await seed(anchor, 'OI-20260101-OOOO');
+    await createDraftAndLink(anchor, 'OI-20260101-OOOO', 'conflict-draft');
+
+    for (const args of [
+      ['start', 'OI-20260101-OOOO', '--complete', 'conflict-draft', '--discard', 'conflict-draft'],
+      ['start', 'OI-20260101-OOOO', '--complete', 'conflict-draft', '--change', 'other-draft'],
+    ]) {
+      const result = runCli(args, { cwd: anchor.root, env: env(anchor) });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('--complete');
+    }
+    expect((await metadata(anchor, 'conflict-draft'))['x-openissue-interview']).toMatchObject({
+      status: 'incomplete',
+    });
+  });
+});
+
 describe('interview resume, takeover, and discard', () => {
   it('resumes the same incomplete draft and does not create a second one', async () => {
     const anchor = await createAnchor({ id: 'demo', openspec: true });

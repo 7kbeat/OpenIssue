@@ -6,7 +6,7 @@ license: MIT
 compatibility: Requires openissue CLI and OpenSpec CLI.
 metadata:
   author: openissue
-  version: "1.1"
+  version: "1.2"
 ---
 
 # OpenIssue Handoff
@@ -34,7 +34,8 @@ Inspect the `handoff` object in the JSON output:
 - `archived_pending`: `true` only when the issue is `open`, has at least one linked proposal, and **every** linked proposal is `archived`.
 - `link_invalid`: `true` when any linked proposal is `missing` from both active changes and the archive.
 - `updated_since_proposal`: `true` when the issue title or description changed after the proposal link snapshot was recorded.
-- `interview_incomplete` / `interview_unknown`: Indicates an unfinished or unreadable `x-openissue-interview` marker on an active proposal.
+- `interview_incomplete` / `interview_completed` / `interview_unknown`: Indicates whether an active proposal still has an unfinished interview, has an explicitly completed interview marker, or has an unreadable `x-openissue-interview` marker.
+- `interview_change_ids` / `interview_completed_change_ids`: Active proposals with incomplete or completed interview markers, respectively.
 
 ## 1. Re-link an Existing Active Proposal
 
@@ -76,6 +77,7 @@ After OpenSpec implementation and `openspec archive` complete:
 
 - **Do NOT create new proposals:** Direct proposal creation via `handoff --change` is disabled; always use `openissue start <id>` and `openissue-grill-me` for new proposals.
 - **Do NOT forge OpenSpec artifacts or state:** Never fabricate `proposal.md`, `specs/`, `design.md`, `tasks.md`, `.openspec.yaml` metadata, or archive status.
+- **Do NOT mark interviews completed here:** Interview completion belongs to `openissue-grill-me` and `openissue start <id> --complete <change-id>`. This skill only re-links proposals and confirms archived completion.
 - **Do NOT auto-close issues** or mutate existing proposal contents during handoff.
 
 ## Output

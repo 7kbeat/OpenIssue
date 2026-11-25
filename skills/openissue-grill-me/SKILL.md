@@ -1,12 +1,12 @@
 ---
 name: openissue-grill-me
-description: Interview the user from a user-centered Product Engineer perspective and turn an OpenIssue requirement into an unambiguous OpenSpec plan. Start from the requirement, create the proposal draft automatically, record confirmed decisions incrementally in proposal/specs/design, and generate TDD tasks only after the user explicitly ends the interview.
+description: Interview the user from a user-centered Product Engineer perspective and turn an OpenIssue requirement into an unambiguous OpenSpec plan. Start from the requirement, create the proposal draft automatically, record confirmed decisions incrementally in proposal/specs/design, and generate TDD tasks only after the user explicitly ends the interview. The Agent must explicitly mark the interview completed in OpenIssue after the explicit end.
 allowed-tools: Bash(openissue:*), Bash(openspec:*)
 license: MIT
 compatibility: Requires openissue CLI, OpenSpec CLI, and an Agent conversation.
 metadata:
   author: openissue
-  version: "1.1"
+  version: "1.2"
 ---
 
 # OpenIssue Grill-Me: User-Centered Product Decision Interview
@@ -77,11 +77,12 @@ openissue start <id> --json
 Read the returned instruction and proposal state. Resolve the state before asking the first interview question:
 
 1. **Incomplete draft** — continue the same draft. Do not create a second draft.
-2. **One active proposal** — take over that proposal. Preserve its existing content and add only the interview marker and newly confirmed content.
-3. **Multiple active proposals** — list them and ask the user which one to take over. Do not choose for the user.
-4. **Archived proposals only** — explain that archived proposals cannot be taken over. Do not modify archived content; let the user decide whether to relink or start a new proposal.
-5. **Missing or unreadable links** — show the invalid state. Do not silently overwrite or create a replacement.
-6. **No active proposal** — create the draft using the suggested or explicitly chosen change id.
+2. **Completed draft** — do not restart the interview or reset the marker. Treat the planning phase as finished; only continue if the user explicitly asks to revise a decision, and then update the owning artifacts and regenerate tasks rather than duplicating the draft.
+3. **One active proposal without an interview marker** — take over that proposal. Preserve its existing content and add only the interview marker and newly confirmed content.
+4. **Multiple active proposals** — list them and ask the user which one to take over. Do not choose for the user.
+5. **Archived proposals only** — explain that archived proposals cannot be taken over. Do not modify archived content; let the user decide whether to relink or start a new proposal.
+6. **Missing or unreadable links** — show the invalid state. Do not silently overwrite or create a replacement.
+7. **No active proposal** — create the draft using the suggested or explicitly chosen change id.
 
 Do not create an empty or second proposal while a choice is still unresolved.
 
@@ -128,6 +129,14 @@ The requirement must remain open, show the linked proposal, and carry the incomp
   ```bash
   openissue start <id> --discard <change-id> --yes
   ```
+
+- An interview is completed only after the user explicitly ends it and the Agent runs the completion command in Section 4.5:
+
+  ```bash
+  openissue start <id> --complete <change-id> --json
+  ```
+
+  Never leave a finished interview marked `incomplete`. Chat agreement, a decision summary, or generated tasks alone do not update the OpenIssue interview status.
 
 - Use `openissue-handoff` only for relinking an existing proposal or confirming completion after all linked proposals are archived (`openissue confirm <id>`). Never use it to create a replacement proposal.
 - Never auto-close a requirement. After tasks are generated and the user later requests implementation (`openspec apply`) and archival (`openspec archive`), show the pending-completion state and complete closure through `openissue-handoff` (`openissue confirm <id>`) only after the user explicitly confirms.
@@ -278,6 +287,8 @@ The interview is complete only when:
 
 Finish with a concise decision summary grouped into **Confirmed**, **Open**, and **Risks to Verify**, and identify the OpenSpec artifacts updated or still needed.
 
+Interview completion has a mandatory OpenIssue state transition. Do not report the interview as finished while the linked draft still shows `interview_incomplete: true`. Complete it only through the explicit end flow in Section 4.5, then verify the status and report it.
+
 ## 4. OpenSpec Decision Capture
 
 Treat OpenSpec as the durable source of truth for agreed product behavior. The interview is not complete merely because the user and assistant agree in chat; confirmed decisions must be reflected in the appropriate OpenSpec change artifacts when the project workspace is available.
@@ -403,7 +414,16 @@ After the open items are resolved and the planning artifacts are reviewed, gener
 
 Task wording may refer to implementation work, but verification must trace back to the user-visible scenarios in the spec. Do not mark tasks complete unless the work and its verification have actually been completed.
 
-After generating tasks, stop. The planning artifacts are complete before tasks; tasks are a separate handoff artifact, not part of planning. Show the task summary and verification method, and state that implementation requires a separate explicit request. Do not modify business code or enter OpenSpec apply in the same action.
+After generating tasks, do not stop yet. First run the artifact validation in Section 4.6. When validation passes and there are no unresolved items, mark the OpenIssue interview as completed and verify it:
+
+```bash
+openissue start <id> --complete <change-id> --json
+openissue show <id> --json
+```
+
+The expected state is `handoff.interview_completed: true` with the change id present in `handoff.interview_completed_change_ids`. If the completion command fails, leave the interview `incomplete`, report the failure, and do not claim the interview has ended.
+
+After completion succeeds, stop. The planning artifacts are complete before tasks; tasks are a separate handoff artifact, not part of planning. Show the task summary, the completed interview state, and verification method, and state that implementation requires a separate explicit request. Do not modify business code or enter OpenSpec apply in the same action.
 
 If a confirmed behavior later changes, state that existing tasks may be stale. Do not treat them as still valid. Regenerate them only after the user explicitly ends the interview again.
 
@@ -420,6 +440,7 @@ Before considering the decision record complete:
 5. Confirm tasks verify the corresponding requirements.
 6. Run `openspec validate` and, when compatible with the project, `openspec validate --strict`; resolve reported issues rather than ignoring them.
 7. Report exactly which artifacts were created or changed and any validation that could not be run.
+8. When the user has explicitly ended the interview, run the completion command from Section 4.5 and confirm the resulting `handoff.interview_completed` state. Never report a validated interview as complete while its OpenIssue marker remains `incomplete`.
 
 Do not set `skip_specs: true` to bypass required behavior documentation. Use it only when the change genuinely has no spec-level behavior change, such as a pure refactor, tooling-only change, or documentation-only change. Never invent a requirement solely to satisfy validation.
 
@@ -438,6 +459,7 @@ Do not archive a change unless the user explicitly requests that step or the act
 - **Scope control:** Explore relevant edge cases thoroughly, but do not expand the feature beyond the user's goal without identifying the expansion as a separate decision.
 - **One requirement, one active draft:** Do not create a second draft, silently replace an archived proposal, or take over an archived proposal.
 - **No silent lifecycle changes:** The requirement stays open throughout the interview and is not closed automatically when a proposal is created, updated, or archived.
+- **Explicit interview completion:** When the user explicitly ends the interview and tasks are generated and validated, run `openissue start <id> --complete <change-id>`. A chat summary, Agent confidence, or generated `tasks.md` is not a substitute for this state transition.
 
 ## 6. Illustrative Example
 
