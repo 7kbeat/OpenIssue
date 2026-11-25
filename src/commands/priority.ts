@@ -4,12 +4,10 @@ import type { Command } from 'commander';
 import { errorMessage, OpenIssueError } from '../core/errors.js';
 import type { EvaluatedIssue, PriorityContext, PriorityEvaluation } from '../domain/priority.js';
 import { evaluatePriority, tierLabel } from '../domain/priority.js';
-import {
-  buildAssistantRequest,
-  validateAssistantResponse,
-} from '../domain/assistant.js';
+import { buildAssistantRequest } from '../domain/assistant.js';
+import { applyAssistantResults } from '../services/priority.js';
 import { readProjectFacts } from '../storage/facts.js';
-import { loadIssues, mutateIssue, publicIssue } from '../storage/issue.js';
+import { loadIssues, publicIssue } from '../storage/issue.js';
 import { activeWorkspace } from './context.js';
 
 export function registerPriorityCommand(program: Command): void {
@@ -112,37 +110,13 @@ async function applyResponse(
       'INVALID_ASSISTANT_RESPONSE',
     );
   }
-  const validation = validateAssistantResponse(raw, context, evaluation);
-  const applied: string[] = [];
-  const errors = [...validation.errors];
-  const now = new Date().toISOString();
-  for (const result of validation.valid) {
-    const state = evaluation.byId.get(result.id);
-    if (!state) continue;
-    try {
-      await mutateIssue(
-        productDir,
-        productId,
-        result.id,
-        (issue) => {
-          issue.priority = {
-            ...issue.priority,
-            tier: result.tier,
-            reason: result.reason,
-            basis: result.basis,
-            ...(result.order !== undefined ? { order: result.order } : {}),
-            judged_at: now,
-            input_hash: result.input_hash,
-            source: 'assistant',
-          };
-        },
-        { expectedUpdatedAt: state.issue.updated_at },
-      );
-      applied.push(result.id);
-    } catch (error) {
-      errors.push(`${result.id} 写入失败：${errorMessage(error)}`);
-    }
-  }
+  const { applied, errors } = await applyAssistantResults({
+    raw,
+    productDir,
+    productId,
+    context,
+    evaluation,
+  });
   console.log(JSON.stringify({ applied, errors }, null, 2));
   if (errors.length > 0) process.exitCode = 1;
 }
