@@ -165,6 +165,7 @@ describe('OpenIssue start entry', () => {
     expect(output.instruction).toContain('openspec new change billing-integration');
     expect(output.instruction).toContain('--from-interview');
     expect(output.instruction).toContain('结束访谈并生成任务');
+    expect(output.instruction).toContain('openissue-apply');
 
     expect(
       await readFile(path.join(anchor.root, 'openissue', 'issues', 'OI-20260101-AAAA.md'), 'utf8'),

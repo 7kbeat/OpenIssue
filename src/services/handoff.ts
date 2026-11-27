@@ -207,7 +207,7 @@ function buildStartInstruction(input: {
   lines.push('访谈中每确认一项决策，立即按归属写入 proposal、specs 或 design，让用户看到 diff。');
   lines.push('用户明确执行“结束访谈并生成任务”后，先整理规划产物并生成 TDD tasks；若 openissue show 仍显示访谈未完成，再运行 openissue start <id> --complete <change-id> 标记已完成。');
   lines.push('tasks 仅在用户明确执行“结束访谈并生成任务”后生成；生成后停止，不进入实现。');
-  lines.push('只有用户明确要求实现后，才进入标准 OpenSpec apply。');
+  lines.push('只有用户明确要求实现后，才进入 openissue-apply（OpenIssue 需求的 OpenSpec apply 流程）。');
   lines.push('来自 OpenIssue 需求的规划使用本流程；没有需求来源的 OpenSpec 工作继续使用标准 propose。');
   return lines.join('\n');
 }

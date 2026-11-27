@@ -77,11 +77,12 @@ pnpm e2e:product
 
 ## 配套 Agent skills
 
-OpenIssue 随包提供四份 Agent workflow skills：
+OpenIssue 随包提供五份 Agent workflow skills：
 
 - `openissue-capture`：把想法或 bug 捕获为需求，只记录不实现；
 - `openissue-triage`：按项目事实、依赖与手动覆盖审阅优先级；
 - `openissue-grill-me`：从成熟需求开始产品决策访谈，自动创建提案草稿并增量写入 proposal/specs/design；用户明确结束访谈后才生成 TDD tasks；
+- `openissue-apply`：用户明确要求实现后，读取需求关联提案与 TDD tasks，按 RED/GREEN/REFACTOR/INTEGRATE 实现并验证；不自动归档或关闭需求；
 - `openissue-handoff`：重新关联已有提案，并在全部关联提案归档后由用户确认完成。
 
 初始化不是随包 skill。首次接入请按本文“快速开始”运行 `openissue init`；初始化完成时才会安装上述 skills，避免“必须先安装 onboard 才能初始化”的循环。
@@ -144,8 +145,9 @@ flowchart TD
   O --> P[生成 TDD tasks<br/>RED / GREEN / REFACTOR / INTEGRATE]
   P --> Q[停止<br/>不改代码、不进入 apply、不自动关闭需求]
   Q --> R[用户另行明确要求实现]
-  R --> S[标准 OpenSpec apply 与 archive]
-  S --> T[全部关联提案归档后<br/>openissue confirm]
+  R --> S[Agent 运行 openissue-apply<br/>读取需求与关联提案<br/>按 TDD tasks 实现与验证]
+  S --> S2[用户另行要求后<br/>openspec archive]
+  S2 --> T[全部关联提案归档后<br/>openissue confirm]
   T --> U[需求关闭为已完成]
 ```
 
@@ -214,18 +216,23 @@ sequenceDiagram
     OI-->>Agent: 访谈已完成
     Note over Agent,OS: 到此停止：不改代码、不进入 apply、不自动关闭需求
     opt 用户另行明确要求实现
-      Agent->>OS: 标准 OpenSpec apply 与 archive
-      Agent->>OI: openissue show ID --json 确认全部关联提案已归档
-      Agent->>User: 展示待确认完成
-      User->>OI: openissue confirm ID
-      OI-->>User: 需求关闭为已完成
+      Agent->>OS: openissue-apply 读取 apply instructions 并实现 tasks
+      Agent->>Agent: 运行验证并更新 tasks
+      opt 用户另行明确要求归档
+        Agent->>OS: openspec archive
+        Agent->>OI: openissue show ID --json 确认全部关联提案已归档
+        Agent->>User: 展示待确认完成
+        User->>OI: openissue confirm ID
+        OI-->>User: 需求关闭为已完成
+      end
     end
   end
 ```
 
 边界说明：
 
-- 没有 OpenIssue 来源的直接 OpenSpec 请求仍走标准 propose，不创建 OpenIssue 草稿。
+- 没有 OpenIssue 来源的直接 OpenSpec 请求仍走标准 propose，不创建 OpenIssue 草稿；实现阶段继续使用标准 `openspec-apply-change`。
+- 来自 OpenIssue 的实现使用 `openissue-apply`：先核对需求、依赖、访谈完成状态与关联提案，再按 OpenSpec apply instructions 执行 TDD tasks；实现完成后停止，不自动归档或关闭需求。
 - `openissue handoff --link` 只用于重新关联已有提案；命令会提示该路径跳过产品决策访谈。
 - 用户或 Agent 判断访谈结束时，Agent 必须先提示访谈已经结束；若用户尚未确认，先请求确认。确认后 review 并整理 proposal/specs/design，阅读项目 TDD 规范与 OpenSpec tasks instructions，再生成符合 TDD 的 tasks。
 - 访谈中断时草稿与关联保留，需求保持打开；丢弃草稿必须二次确认。
@@ -532,6 +539,8 @@ openissue confirm OI-20261120-ABCD
 ```
 
 只有用户确认才会关闭为“已完成”；系统不会自动关闭。部分归档、已关闭需求或关联失效时不会出现完成提示。
+
+实现阶段由 `openissue-apply` 负责：用户明确要求实现后，Agent 重新读取需求与 handoff 状态，确认访谈已完成、关联提案唯一且 tasks 已生成，再按 OpenSpec apply instructions 执行 RED/GREEN/REFACTOR/INTEGRATE。实现完成不等于归档或需求完成；归档仍需用户明确要求，归档后由 `openissue-handoff` 走确认完成。
 
 ### 11. 启动 Web 看板
 

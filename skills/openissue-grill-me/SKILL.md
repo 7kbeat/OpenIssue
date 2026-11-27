@@ -6,7 +6,7 @@ license: MIT
 compatibility: Requires openissue CLI, OpenSpec CLI, and an Agent conversation.
 metadata:
   author: openissue
-  version: "1.2"
+  version: "1.3"
 ---
 
 # OpenIssue Grill-Me: User-Centered Product Decision Interview
@@ -26,7 +26,7 @@ Use this skill when the OpenSpec work originates from an OpenIssue requirement, 
 - An interview may start only from an open OpenIssue requirement. If no requirement exists, create one with `openissue create` (following `openissue-capture` fact discipline), then enter the interview.
 - The interview context is always obtained through `openissue start <id> --json`; that command does not create a proposal.
 - Check `blocked_by` via `openissue show <id> --json` before planning; if the issue has open or `wontdo` blockers, surface them so the user confirms whether to proceed or resolve dependencies first via `openissue-triage`.
-- Planning artifacts are `proposal.md`, `specs/`, and `design.md`; `tasks.md` is not part of the planning scope. Generate tasks only after the user explicitly ends the interview, then stop before implementation, OpenSpec apply, or closing the requirement.
+- Planning artifacts are `proposal.md`, `specs/`, and `design.md`; `tasks.md` is not part of the planning scope. Generate tasks only after the user explicitly ends the interview, then stop before `openissue-apply`, archival, or closing the requirement.
 
 ### 0.1 Resolve the requirement
 
@@ -139,7 +139,7 @@ The requirement must remain open, show the linked proposal, and carry the incomp
   Never leave a finished interview marked `incomplete`. Chat agreement, a decision summary, or generated tasks alone do not update the OpenIssue interview status.
 
 - Use `openissue-handoff` only for relinking an existing proposal or confirming completion after all linked proposals are archived (`openissue confirm <id>`). Never use it to create a replacement proposal.
-- Never auto-close a requirement. After tasks are generated and the user later requests implementation (`openspec apply`) and archival (`openspec archive`), show the pending-completion state and complete closure through `openissue-handoff` (`openissue confirm <id>`) only after the user explicitly confirms.
+- Never auto-close a requirement. After tasks are generated and the user later requests implementation via `openissue-apply` and archival (`openspec archive`), show the pending-completion state and complete closure through `openissue-handoff` (`openissue confirm <id>`) only after the user explicitly confirms.
 
 ## 1. Core Principles
 
@@ -423,11 +423,11 @@ openissue show <id> --json
 
 The expected state is `handoff.interview_completed: true` with the change id present in `handoff.interview_completed_change_ids`. If the completion command fails, leave the interview `incomplete`, report the failure, and do not claim the interview has ended.
 
-After completion succeeds, stop. The planning artifacts are complete before tasks; tasks are a separate handoff artifact, not part of planning. Show the task summary, the completed interview state, and verification method, and state that implementation requires a separate explicit request. Do not modify business code or enter OpenSpec apply in the same action.
+After completion succeeds, stop. The planning artifacts are complete before tasks; tasks are a separate handoff artifact, not part of planning. Show the task summary, the completed interview state, and verification method, and state that implementation requires a separate explicit request. Do not modify business code or enter `openissue-apply` in the same action.
 
 If a confirmed behavior later changes, state that existing tasks may be stale. Do not treat them as still valid. Regenerate them only after the user explicitly ends the interview again.
 
-If the user explicitly asks to implement after tasks have been generated, confirm that they have reviewed the tasks, then enter the standard OpenSpec apply flow. Do not implement code inside the interview flow.
+If the user explicitly asks to implement after tasks have been generated, confirm that they have reviewed the tasks, then enter `openissue-apply`. Do not implement code inside the interview flow.
 
 ### 4.6 Validate and preserve traceability
 
@@ -517,4 +517,4 @@ For an OpenIssue session, also report:
 
 - the requirement id and draft id;
 - whether tasks were generated (and if generated, confirm no code was modified and `openissue` remains `open`);
-- the next action the user must explicitly request (continue interview, generate tasks, run `openspec apply` / `openspec archive`, or confirm completion via `openissue-handoff` after archival).
+- the next action the user must explicitly request (continue interview, generate tasks, run `openissue-apply` / `openspec archive`, or confirm completion via `openissue-handoff` after archival).

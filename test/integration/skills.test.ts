@@ -12,6 +12,7 @@ import {
 
 const cleanup: TempDir[] = [];
 const skillNames = [
+  'openissue-apply',
   'openissue-capture',
   'openissue-grill-me',
   'openissue-handoff',
@@ -84,6 +85,16 @@ describe('bundled skills', () => {
     expect(triage).toContain('openissue prioritize --emit');
     expect(triage).toContain('openissue prioritize --apply');
     expect(triage).toContain('openissue depend');
+    const apply = await readFile(path.resolve('skills', 'openissue-apply', 'SKILL.md'), 'utf8');
+    expect(apply).toContain('OpenIssue Apply: Implement an Issue');
+    expect(apply).toContain('openissue show <id> --json');
+    expect(apply).toContain('openspec instructions apply --change');
+    expect(apply).toContain('RED');
+    expect(apply).toContain('GREEN');
+    expect(apply).toContain('REFACTOR');
+    expect(apply).toContain('INTEGRATE');
+    expect(apply).toContain('Do not archive');
+    expect(apply).not.toContain('test-case-authoring');
     const handoff = await readFile(path.resolve('skills', 'openissue-handoff', 'SKILL.md'), 'utf8');
     expect(handoff).toContain('Stage 4 of 4');
     expect(handoff).toContain('openissue handoff');

@@ -6,7 +6,7 @@ license: MIT
 compatibility: Requires openissue CLI and OpenSpec CLI.
 metadata:
   author: openissue
-  version: "1.2"
+  version: "1.3"
 ---
 
 # OpenIssue Handoff
@@ -52,7 +52,7 @@ Use this path only when the user explicitly chooses an existing active OpenSpec 
 
 ## 2. Verify Archival & Confirm Completion
 
-After OpenSpec implementation and `openspec archive` complete:
+After `openissue-apply` completes the implementation and `openspec archive` archives the proposal:
 
 1. Re-read the issue state:
    ```bash
@@ -76,6 +76,7 @@ After OpenSpec implementation and `openspec archive` complete:
 ## Boundaries
 
 - **Do NOT create new proposals:** Direct proposal creation via `handoff --change` is disabled; always use `openissue start <id>` and `openissue-grill-me` for new proposals.
+- **Do NOT implement code:** Implementation belongs to `openissue-apply`; this skill only re-links proposals and confirms archived completion.
 - **Do NOT forge OpenSpec artifacts or state:** Never fabricate `proposal.md`, `specs/`, `design.md`, `tasks.md`, `.openspec.yaml` metadata, or archive status.
 - **Do NOT mark interviews completed here:** Interview completion belongs to `openissue-grill-me` and `openissue start <id> --complete <change-id>`. This skill only re-links proposals and confirms archived completion.
 - **Do NOT auto-close issues** or mutate existing proposal contents during handoff.
